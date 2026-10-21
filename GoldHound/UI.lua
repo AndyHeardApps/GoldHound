@@ -57,24 +57,15 @@ local OPP_COLUMNS = {
   { label = "", width = 62, button = true },
 }
 
--- Materials already owned: whole crafts covered, else the share of one craft's cost.
-local function OwnedText(r)
-  if (r.ownedCrafts or 0) >= 1 then return ("%d craft%s"):format(r.ownedCrafts, r.ownedCrafts == 1 and "" or "s") end
-  if (r.ownedFrac or 0) > 0 then return ("%d%%"):format(r.ownedFrac * 100) end
-  return ""
-end
-local function OwnedValue(r)
-  if (r.ownedCrafts or 0) >= 1 then return r.ownedCrafts + 1 end
-  return r.ownedFrac or 0
-end
-
 -- Material cost per craft. When some materials are already owned the cell
--- shows the split: owned (green) + to buy = total, in short money.
+-- shows the split: owned (green) + to buy = total, in short money. When every
+-- material is owned the whole cost is shown in green.
 local function MatsText(r)
   local mark = r.partial and GREY .. "*" .. R or ""
   if r.ownedCost and r.cost then
+    if (r.buyCost or 0) <= 0 then return GREEN .. Money(r.cost) .. R .. mark end
     local short = ns.Chart.ShortMoney
-    return GREEN .. short(r.ownedCost) .. R .. " + " .. short(r.buyCost or 0) .. " = " .. short(r.cost) .. mark
+    return GREEN .. short(r.ownedCost) .. R .. " + " .. short(r.buyCost) .. " = " .. short(r.cost) .. mark
   end
   return Money(r.cost) .. mark
 end
@@ -84,7 +75,6 @@ local CRAFT_COLUMNS = {
   { label = "Profession", width = 70, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
   { label = "Who", width = 64, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
   { label = "Mats own + buy", width = 130, align = "RIGHT", text = MatsText, value = function(r) return r.cost or 0 end },
-  { label = "In bags", width = 52, align = "RIGHT", text = OwnedText, value = OwnedValue },
   { label = "Sells for", width = 86, align = "RIGHT", text = function(r) return Money(r.market) end, value = function(r) return r.market or 0 end },
   { label = "Profit", width = 88, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
   { label = "ROI", width = 40, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
