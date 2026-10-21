@@ -1,0 +1,29 @@
+## Interface: 16001
+## Title: GoldHound
+## Notes: Sniffs out gold: flips, price resets, crafting profit, cheap recipes, arbitrage, snipes and restocks, with sale rates and AH cut included.
+## Author: Andy
+## Version: 0.1.0
+## SavedVariables: GoldHoundDB
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+## AddonCompartmentFunc: GoldHound_CompartmentClick
+## Category: Auction House
+
+Core.lua
+Data.lua
+Characters.lua
+Inventory.lua
+Pricing.lua
+Scan.lua
+Professions.lua
+Vendor.lua
+Mail.lua
+Recipes.lua
+Analysis.lua
+Buy.lua
+Refresh.lua
+Worth.lua
+Chart.lua
+Plan.lua
+Posting.lua
+Tooltip.lua
+UI.lua
