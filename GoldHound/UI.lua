@@ -5,7 +5,7 @@ local UI = {}
 ns.UI = UI
 
 local ROW_HEIGHT, NUM_ROWS = 22, 18
-local WIDTH = 920
+local WIDTH = 960
 local LIST_TOP = -118
 local CHART_ROWS = 9   -- rows of the list given to the net worth chart on the Ledger tab
 local HEIGHT = -LIST_TOP + 22 + NUM_ROWS * ROW_HEIGHT + 40
@@ -45,7 +45,7 @@ local function Age(r) if not r.t then return Unknown() end return ns.AgeText(r.t
 
 local OPP_COLUMNS = {
   { label = "Type", width = 66, text = function(r) return r.catLabel end, value = function(r) return r.catLabel end },
-  { label = "Item", width = 206, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Item", width = 246, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
   { label = "Who", width = 72, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
   { label = "Qty", width = 36, align = "RIGHT", text = function(r) return Qty(r.qty) end, value = function(r) return r.qty or 0 end },
   { label = "Cost", width = 90, align = "RIGHT", text = function(r) if r.overBudget then return RED .. ns.Money(r.cost) .. R end return Money(r.cost) end, value = function(r) return r.cost or 0 end },
@@ -68,16 +68,27 @@ local function OwnedValue(r)
   return r.ownedFrac or 0
 end
 
+-- Material cost per craft. When some materials are already owned the cell
+-- shows the split: owned (green) + to buy = total, in short money.
+local function MatsText(r)
+  local mark = r.partial and GREY .. "*" .. R or ""
+  if r.ownedCost and r.cost then
+    local short = ns.Chart.ShortMoney
+    return GREEN .. short(r.ownedCost) .. R .. " + " .. short(r.buyCost or 0) .. " = " .. short(r.cost) .. mark
+  end
+  return Money(r.cost) .. mark
+end
+
 local CRAFT_COLUMNS = {
-  { label = "Recipe", width = 176, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
-  { label = "Profession", width = 66, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
-  { label = "Who", width = 60, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
-  { label = "Mats/craft", width = 86, align = "RIGHT", text = function(r) return Money(r.cost) .. (r.partial and GREY .. "*" .. R or "") end, value = function(r) return r.cost or 0 end },
-  { label = "In bags", width = 56, align = "RIGHT", text = OwnedText, value = OwnedValue },
+  { label = "Recipe", width = 170, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Profession", width = 70, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
+  { label = "Who", width = 64, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
+  { label = "Mats own + buy", width = 130, align = "RIGHT", text = MatsText, value = function(r) return r.cost or 0 end },
+  { label = "In bags", width = 52, align = "RIGHT", text = OwnedText, value = OwnedValue },
   { label = "Sells for", width = 86, align = "RIGHT", text = function(r) return Money(r.market) end, value = function(r) return r.market or 0 end },
-  { label = "Profit", width = 90, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
+  { label = "Profit", width = 88, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
   { label = "ROI", width = 40, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
-  { label = "Sales/day", width = 60, align = "RIGHT", text = function(r) return ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
+  { label = "Sales/day", width = 58, align = "RIGHT", text = function(r) return ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
   { label = "Age", width = 42, align = "RIGHT", text = Age, value = function(r) return r.t or 0 end },
   { label = "", width = 62, button = true },
 }
