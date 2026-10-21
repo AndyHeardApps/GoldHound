@@ -181,7 +181,7 @@ local TABS = {
         tt:AddDoubleLine("Crafts planned", tostring(row.crafts), 0.8, 0.8, 0.8, 1, 1, 1)
         tt:AddDoubleLine("Crafter", row.char or "?", 0.8, 0.8, 0.8, 1, 1, 1)
         for _, line in ipairs(row.lines or {}) do tt:AddDoubleLine(line[1], line[2], 0.8, 0.8, 0.8, 1, 1, 1) end
-        tt:AddLine("Type a count in the box, or left-click for one more craft and right-click for one fewer. Shift changes by ten. Remove drops it.", 0.8, 0.8, 0.8, true)
+        tt:AddLine("Type a count in the box, or left-click for one more craft and right-click for one fewer. Ctrl changes by ten. Remove drops it.", 0.8, 0.8, 0.8, true)
         return
       end
       for _, line in ipairs(row.lines or {}) do tt:AddDoubleLine(line[1], line[2], 0.8, 0.8, 0.8, 1, 1, 1) end
@@ -242,7 +242,7 @@ function UI.PlannedCrafts(recipeID)
 end
 
 function UI.ShowShopping(recipeID, amount)
-  amount = amount or (IsShiftKeyDown() and 10 or 1)
+  amount = amount or (IsControlKeyDown() and 10 or 1)
   local list = ShoppingList()
   local found
   for _, entry in ipairs(list) do
@@ -371,6 +371,28 @@ local function RefreshReady()
   return ns.ahOpen and not ns.Refresh.IsRunning() and not ns.Scan.IsRunning() and not ns.Buy.IsBusy()
 end
 
+-- Shift-click on a row: put the item link where Blizzard would put it. Into the open chat
+-- box if there is one, otherwise into the auction house search box (Buy tab only) and run the
+-- search, otherwise open the chat box with the link in it.
+local function InsertLink(link)
+  if not link then return false end
+  local util = ChatFrameUtil
+  local insert = util and util.InsertLink or ChatEdit_InsertLink
+  local getActive = util and util.GetActiveWindow or ChatEdit_GetActiveWindow
+  local openChat = util and util.OpenChat or ChatFrame_OpenChat
+  local chatActive = getActive and getActive()
+  local ok, done = pcall(insert, link)
+  if ok and done then
+    if not chatActive and AuctionHouseFrame and AuctionHouseFrame:IsVisible() and AuctionHouseFrame.SearchBar then
+      pcall(AuctionHouseFrame.SearchBar.StartSearch, AuctionHouseFrame.SearchBar)
+    end
+    return true
+  end
+  if openChat then pcall(openChat, link) return true end
+  return false
+end
+UI.InsertLink = InsertLink
+
 local function CreateRow(parent, index)
   local row = CreateFrame("Button", nil, parent)
   row:SetSize(WIDTH - 36, ROW_HEIGHT)
@@ -416,8 +438,12 @@ local function CreateRow(parent, index)
   row:SetScript("OnClick", function(_, button)
     local data = row.data
     if not data then return end
+    if button == "LeftButton" and IsModifiedClick("CHATLINK") and data.link then
+      InsertLink(data.link)
+      return
+    end
     if data.kind == "recipe" then
-      local step = IsShiftKeyDown() and 10 or 1
+      local step = IsControlKeyDown() and 10 or 1
       UI.AdjustShopping(data.recipeID, button == "RightButton" and -step or step)
     elseif data.id and button == "RightButton" and state.tab == "plan" then
       ns.Plan.ToggleDone(data)
@@ -442,6 +468,9 @@ local function CreateRow(parent, index)
     end
     if row.data.kind ~= "recipe" and UI.RowKey(row.data) then
       GameTooltip:AddLine("Click for the price chart.", 0.6, 0.6, 0.6)
+    end
+    if row.data.link then
+      GameTooltip:AddLine("Shift-click to link it in chat or the auction house search.", 0.6, 0.6, 0.6)
     end
     GameTooltip:Show()
   end)
@@ -474,6 +503,7 @@ local function LayoutColumns(columns)
   for i = #columns + 1, #headers do headers[i]:Hide() end
   for _, row in ipairs(rows) do
     local rx = 0
+    row.hasIcon = false
     for i, col in ipairs(columns) do
       local cell = row.cells[i]
       if not cell then
@@ -485,6 +515,7 @@ local function LayoutColumns(columns)
       cell:SetJustifyH(col.align or "LEFT")
       cell:SetWordWrap(false)
       if col.item then
+        row.hasIcon = true
         row.icon:ClearAllPoints()
         row.icon:SetPoint("LEFT", row, "LEFT", rx + 2, 0)
         cell:SetPoint("LEFT", row, "LEFT", rx + 24, 0)
@@ -1037,7 +1068,7 @@ function UI.Render()
         icon = info and info.icon
       end
       row.icon:SetTexture(icon or 134400)
-      row.icon:Show()
+      row.icon:SetShown(row.hasIcon)
       local canRefresh = data.kind ~= "recipe" and UI.RowKey(data) ~= nil or (data.kind == "recipe" and data.recipeID ~= nil)
       row.refresh:SetShown(canRefresh)
       row.refresh:SetEnabled(ready)
