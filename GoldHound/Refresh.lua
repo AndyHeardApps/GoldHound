@@ -118,12 +118,13 @@ end
 local function StoreKey(key, itemID, listings, now)
   SortListings(listings)
   local info = ns.ItemInfo(itemID)
-  local agg = { listings = listings, qty = 0, n = 0, itemID = itemID, name = info and info.name or (listings[1] and listings[1].name), refreshed = now }
+  local agg = { listings = listings, qty = 0, n = 0, itemID = itemID, name = info and info.name or (listings[1] and listings[1].name), refreshed = now, t = now }
   for _, l in ipairs(listings) do
     if l.buyout > 0 then agg.qty = agg.qty + l.count; agg.n = agg.n + 1 end
   end
   ns.scan.byKey[key] = agg
   if agg.name and not ns.scan.byName[agg.name] then ns.scan.byName[agg.name] = itemID end
+  ns.Scan.SaveKey(key)
   local prices = ns.realm.prices
   local e = prices[key]
   if agg.n > 0 then

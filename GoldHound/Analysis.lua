@@ -42,6 +42,10 @@ local function Finish(t)
   if t.cost and t.cost > 0 and t.profit then t.roi = t.profit / t.cost end
   if t.key and not t.rate then t.rate, t.rateSource = Pricing.Rate(t.key) end
   t.days = Pricing.DaysToSell(t.rate, t.sellQty or t.qty or 1)
+  if t.t == nil and t.key then -- when the prices behind this row were seen
+    local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[t.key]
+    if agg then t.t, t.refreshed = agg.t, agg.refreshed end
+  end
   t.lines = t.lines or {}
   return t
 end

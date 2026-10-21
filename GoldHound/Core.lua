@@ -14,6 +14,7 @@ ns.DEFAULTS = {
   resetDiscount = 0.35,  -- cheap listings must be this far below the price history to reset
   resetMaxDays = 7,      -- a reset must be sellable within this many days (when rate is known)
   scanCooldown = 900,    -- seconds between full scans (server throttle is ~15 min)
+  autoScan = false,      -- start a full scan whenever the cooldown ends while the AH is open
   craftCooldown = 120,   -- seconds between targeted craft refreshes (per-item searches, no server throttle)
   buyoutMode = "auto",   -- how the full scan reports commodity buyouts: auto-detect, "unit" or "stack"
   historySize = 40,      -- price observations kept per item for the market median and price chart
@@ -268,6 +269,16 @@ end
 
 function ns.Round(n) return math.floor((n or 0) + 0.5) end
 
+-- How long ago a timestamp was, briefly: "now", "12m", "3h", "2d".
+function ns.AgeText(t)
+  if not t then return nil end
+  local d = time() - t
+  if d < 60 then return "now" end
+  if d < 3600 then return ("%dm"):format(math.floor(d / 60)) end
+  if d < 86400 then return ("%dh"):format(math.floor(d / 3600)) end
+  return ("%dd"):format(math.floor(d / 86400))
+end
+
 function ns.Count(t)
   local n = 0
   for _ in pairs(t or {}) do n = n + 1 end
@@ -338,6 +349,7 @@ local function Help()
   ns.Print("Commands:")
   ns.Print("  /gh - toggle the window")
   ns.Print("  /gh scan [force] - full auction house scan (AH must be open)")
+  ns.Print("  /gh auto [on|off] - auto-scan: rescan whenever the cooldown ends while the AH is open (now %s)", s.autoScan and "on" or "off")
   ns.Print("  /gh refresh [force|stop] - re-price only the items your recipes make and use (no 15 minute wait)")
   ns.Print("  /gh minprofit <money> - minimum profit shown, e.g. 1g50s, 0 to disable (now %s)", ns.Money(s.minProfit))
   ns.Print("  /gh minroi <percent> - minimum return on investment, 0 to disable (now %d%%)", (s.minRoi or 0) * 100)
@@ -387,6 +399,10 @@ SlashCmdList.GOLDHOUND = function(msg)
     Help()
   elseif cmd == "scan" then
     ns.Scan.Start(rest == "force")
+  elseif cmd == "auto" then
+    local on
+    if rest == "on" then on = true elseif rest == "off" then on = false else on = not ns.settings.autoScan end
+    ns.Scan.SetAuto(on)
   elseif cmd == "refresh" then
     if rest == "stop" then ns.Refresh.Abort() else ns.Refresh.Start(rest == "force") end
   elseif cmd == "minprofit" then
@@ -446,7 +462,9 @@ SlashCmdList.GOLDHOUND = function(msg)
   elseif cmd == "reset" then
     if rest == "prices" then
       ns.realm.prices, ns.realm.sales, ns.realm.snapshot, ns.realm.lastScan, ns.realm.lastRefresh = {}, {}, nil, nil, nil
-      ns.scan.byKey = {}
+      ns.realm.listings = nil
+      ns.scan.byKey, ns.scan.byName = {}, {}
+      ns.Analysis.Invalidate()
       ns.Print("Price and sale-rate data wiped for %s.", ns.realmKey)
     elseif rest == "recipes" then
       ns.db.recipes, ns.db.recipeItems = {}, {}

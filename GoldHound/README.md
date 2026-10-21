@@ -65,6 +65,16 @@ Until there is enough data a suggestion says "unknown" rather than guessing.
    items, so the Buy buttons use the current prices too, and each refresh adds
    a point to the item's price history. Sale rates still only come from full
    scans.
+   Right-click **Scan AH** (or `/gh auto`) to turn on auto-scan: while the
+   auction house stays open, a new full scan starts each time the cooldown
+   ends, so you can park a character at the auctioneer and let the price
+   history build up.
+   The listings from the last scan, with any refreshes since, are saved, so
+   the opportunities are still there after a reload or relog. The Age column
+   shows how old the prices behind each row are, and the small refresh button
+   on a row re-checks just that item (or that craft and its reagents).
+   Click a row for the item's price chart. Alt-click any item link, in chat,
+   your bags or any other window, to open the same chart.
 4. Scan at least three times over a day or two. Flips and resets need price
    history before they appear.
 
@@ -74,6 +84,7 @@ Until there is enough data a suggestion says "unknown" rather than guessing.
 | --- | --- |
 | `/gh` | Toggle the window |
 | `/gh scan` | Full scan (add `force` to ignore the local cooldown) |
+| `/gh auto [on\|off]` | Auto-scan: start a full scan whenever the cooldown ends while the auction house is open |
 | `/gh refresh` | Re-price only the items your recipes make and use (add `force` to ignore the cooldown, `stop` to cancel) |
 | `/gh minprofit 1g50s` | Minimum profit before something is suggested (0 disables) |
 | `/gh minroi 25` | Minimum return on investment in percent; a suggestion must clear both thresholds, so set the flat minimum to 0 to go by ROI alone (0 disables) |

@@ -36,11 +36,16 @@ local function CommonTooltip(row, tt)
   if row.rateSource == "vendor" then rateText = "instant (vendor)" end
   tt:AddDoubleLine("Sale rate", rateText, 0.8, 0.8, 0.8, 1, 1, 1)
   if row.days then tt:AddDoubleLine("Days to sell", Days(row.days), 0.8, 0.8, 0.8, 1, 1, 1) end
+  if row.t then
+    tt:AddDoubleLine(row.refreshed and "Prices refreshed" or "Prices scanned", ("%s (%s ago)"):format(date("%d %b %H:%M", row.t), ns.AgeText(row.t)), 0.8, 0.8, 0.8, 1, 1, 1)
+  end
 end
+
+local function Age(r) if not r.t then return Unknown() end return ns.AgeText(r.t) end
 
 local OPP_COLUMNS = {
   { label = "Type", width = 66, text = function(r) return r.catLabel end, value = function(r) return r.catLabel end },
-  { label = "Item", width = 236, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Item", width = 206, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
   { label = "Who", width = 72, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
   { label = "Qty", width = 36, align = "RIGHT", text = function(r) return Qty(r.qty) end, value = function(r) return r.qty or 0 end },
   { label = "Cost", width = 90, align = "RIGHT", text = function(r) if r.overBudget then return RED .. ns.Money(r.cost) .. R end return Money(r.cost) end, value = function(r) return r.cost or 0 end },
@@ -48,18 +53,20 @@ local OPP_COLUMNS = {
   { label = "ROI", width = 44, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
   { label = "Sales/day", width = 66, align = "RIGHT", text = function(r) return r.rateSource == "vendor" and "instant" or ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
   { label = "Days", width = 42, align = "RIGHT", text = function(r) return Days(r.days) end, value = function(r) return r.days or 9999 end },
+  { label = "Age", width = 46, align = "RIGHT", text = Age, value = function(r) return r.t or 0 end },
   { label = "", width = 62, button = true },
 }
 
 local CRAFT_COLUMNS = {
-  { label = "Recipe", width = 230, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
-  { label = "Profession", width = 84, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
-  { label = "Who", width = 74, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
+  { label = "Recipe", width = 200, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Profession", width = 74, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
+  { label = "Who", width = 64, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
   { label = "Mats/craft", width = 90, align = "RIGHT", text = function(r) return Money(r.cost) .. (r.partial and GREY .. "*" .. R or "") end, value = function(r) return r.cost or 0 end },
   { label = "Sells for", width = 90, align = "RIGHT", text = function(r) return Money(r.market) end, value = function(r) return r.market or 0 end },
   { label = "Profit", width = 90, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
   { label = "ROI", width = 44, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
   { label = "Sales/day", width = 66, align = "RIGHT", text = function(r) return ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
+  { label = "Age", width = 46, align = "RIGHT", text = Age, value = function(r) return r.t or 0 end },
   { label = "", width = 62, button = true },
 }
 
@@ -565,11 +572,22 @@ local function Build()
   frame.scan:SetSize(100, 22)
   frame.scan:SetPoint("TOPRIGHT", -36, -10)
   frame.scan:SetText("Scan AH")
-  frame.scan:SetScript("OnClick", function() ns.Scan.Start(IsShiftKeyDown()) end)
+  frame.scan:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  frame.scan:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then
+      ns.Scan.SetAuto(not ns.Scan.AutoEnabled())
+      UI.UpdateScanButton()
+      if GameTooltip:GetOwner() == self then self:GetScript("OnEnter")(self) end
+    else
+      ns.Scan.Start(IsShiftKeyDown())
+    end
+  end)
   frame.scan:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
     GameTooltip:SetText("Full auction house scan")
     GameTooltip:AddLine("Needs the auction house open. Shift-click to ignore the cooldown.", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine("Right-click to toggle auto-scan: while the auction house stays open, a new scan starts each time the cooldown ends, so price history builds while you stand there.", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine(ns.Scan.AutoEnabled() and "Auto-scan is on." or "Auto-scan is off.", 1, 1, 1)
     local wait = ns.Scan.CooldownRemaining()
     if wait > 0 then GameTooltip:AddLine(("Cooldown: %d:%02d remaining"):format(math.floor(wait / 60), wait % 60), 1, 0.8, 0.4) end
     GameTooltip:Show()
@@ -928,12 +946,13 @@ function UI.UpdateScanButton()
     return
   end
   local wait = ns.Scan.CooldownRemaining()
+  local auto = ns.Scan.AutoEnabled()
   if wait > 0 then
-    frame.scan:SetText(("Scan %d:%02d"):format(math.floor(wait / 60), wait % 60))
+    frame.scan:SetText(("%s %d:%02d"):format(auto and "Auto" or "Scan", math.floor(wait / 60), wait % 60))
   else
-    frame.scan:SetText("Scan AH")
+    frame.scan:SetText(auto and "Auto scan" or "Scan AH")
   end
-  frame.scan:SetEnabled(ns.ahOpen)
+  frame.scan:SetEnabled(ns.ahOpen or auto)
 end
 
 function UI.SortBy(index)
@@ -1170,7 +1189,7 @@ local function BuildItemChart()
   f.legend:SetPoint("BOTTOMLEFT", 14, 10)
   f.legend:SetPoint("RIGHT", -14, 0)
   f.legend:SetJustifyH("LEFT")
-  f.legend:SetText("One bar per observation. Blue box: 25th to 75th percentile of the units listed. White line: median. Yellow dot: mean. Grey whisker: lowest to highest listing (a red cap means it was clipped). Hover a bar for the numbers.")
+  f.legend:SetText("Grey area: lowest to highest listing. Blue area: 25th to 75th percentile of the units listed. White line with dots: median at each observation. Yellow line: mean. A red tick at the top means the highest listing was off the scale. Hover for the numbers.")
   itemChart = f
 end
 
@@ -1194,10 +1213,30 @@ function UI.ShowItemChart(key, name)
       #points, date("%d %b %H:%M", points[1].t or 0), date("%d %b %H:%M", points[#points].t or 0),
       market and ns.Money(market) or "unknown", entry and entry.m and ns.Money(entry.m) or "?", ns.Pricing.Listed(key)))
   end
-  ns.Chart.DrawCandles(f.chart, points, { empty = "No price history for this item yet." })
+  ns.Chart.DrawBands(f.chart, points, { empty = "No price history for this item yet." })
   f.refresh:SetEnabled(itemID ~= nil and RefreshReady())
   f:Show()
 end
+
+-- Alt-click on any item link (chat, bags, bank, merchant, auction house...)
+-- opens the price chart. Blizzard routes every modified click on an item
+-- through HandleModifiedItemClick, and Alt counts as a modified click because
+-- the self-cast key defaults to it. Chat links are also hooked directly in
+-- case that binding has been changed.
+local lastAltClick = -1
+local function AltClickLink(link)
+  if not link or not IsAltKeyDown() or IsShiftKeyDown() or IsControlKeyDown() then return end
+  if GetTime() == lastAltClick then return end -- the same click reached both hooks
+  local itemID = ns.ItemIDFromLink(link)
+  if not itemID then return end
+  lastAltClick = GetTime()
+  UI.ShowItemChart(ns.KeyFor(itemID, ns.SuffixFromLink(link)), link)
+end
+
+ns.On("READY", function()
+  if HandleModifiedItemClick then hooksecurefunc("HandleModifiedItemClick", function(link) AltClickLink(link) end) end
+  if SetItemRef then hooksecurefunc("SetItemRef", function(link, text) AltClickLink(text or link) end) end
+end)
 
 ns.On("ANALYSIS_DIRTY", function()
   if itemChart and itemChart:IsShown() and itemChart.key then

@@ -268,12 +268,58 @@ function Chart.DrawLines(c, series, opts)
   end
 end
 
--- One bar per observation showing the spread of prices: a box from the 25th to
--- the 75th percentile, a white median line, a yellow mean marker and a thin
--- whisker from the lowest to the highest listing (clipped to keep the scale
--- readable; a red cap marks a clipped whisker).
+-- Price spread over time as filled bands: a grey area from the lowest to the
+-- highest listing, a blue area from the 25th to the 75th percentile on top of
+-- it, a white median line and a yellow mean line, with a dot at each
+-- observation. Textures are the only filled shape available, so each band is
+-- built from narrow vertical strips interpolated between observations. The
+-- scale ignores wild outliers; a red tick at the top marks a clipped high.
 -- points: { { t, min, p25, med, p75, max, mean, qty, n }, ... } sorted by t
-function Chart.DrawCandles(c, points, opts)
+local STRIP = 2
+
+local function Band(c, X, Y, points, loKey, hiKey, r, g, b, a)
+  local n = #points
+  local function at(p, key) return p[key] or p.min or 0 end
+  if n == 1 then
+    local p = points[1]
+    local x, ylo, yhi = X(p.t), Y(at(p, loKey)), Y(at(p, hiKey))
+    Box(c, x - 3, ylo, 6, math.max(1, yhi - ylo), r, g, b, a)
+    return
+  end
+  local x, xEnd = X(points[1].t), X(points[n].t)
+  local i = 1
+  while x < xEnd do
+    local xe = math.min(x + STRIP, xEnd)
+    local xm = (x + xe) / 2
+    while i < n - 1 and X(points[i + 1].t) <= xm do i = i + 1 end
+    local p, q = points[i], points[i + 1]
+    local xp, xq = X(p.t), X(q.t)
+    local f = xq > xp and (xm - xp) / (xq - xp) or 0
+    f = math.max(0, math.min(1, f))
+    local lo = at(p, loKey) + (at(q, loKey) - at(p, loKey)) * f
+    local hi = at(p, hiKey) + (at(q, hiKey) - at(p, hiKey)) * f
+    local ylo, yhi = Y(lo), Y(hi)
+    if yhi - ylo >= 0.5 then Box(c, x, ylo, xe - x, yhi - ylo, r, g, b, a) end
+    x = xe
+  end
+end
+
+local function Polyline(c, X, Y, points, key, r, g, b, a, thickness, dot)
+  local prevX, prevY
+  for _, p in ipairs(points) do
+    local v = p[key]
+    if v then
+      local x, y = X(p.t), Y(v)
+      if prevX then Line(c, prevX, prevY, x, y, r, g, b, a, thickness) end
+      if dot then Box(c, x - dot / 2, y - dot / 2, dot, dot, r, g, b, a) end
+      prevX, prevY = x, y
+    else
+      prevX = nil
+    end
+  end
+end
+
+function Chart.DrawBands(c, points, opts)
   Reset(c)
   opts = opts or {}
   local format = opts.format or Chart.ShortMoney
@@ -294,9 +340,6 @@ function Chart.DrawCandles(c, points, opts)
     if p.max and p.max <= top * 2 and p.max > top then top = p.max end
   end
   local ymax = NiceMax(top * 1.08)
-  -- Bars sit at their real time. The axis gets a margin on each side so the
-  -- first and last bars are not cut off, and the bar width follows the
-  -- closest pair of observations.
   local tmin, tmax = points[1].t or 0, points[n].t or 0
   local span = tmax - tmin
   if span < 3600 then span = 3600 end
@@ -304,12 +347,6 @@ function Chart.DrawCandles(c, points, opts)
   local xmin, xmax = tmin - margin, tmax + margin
   local function X(t) return PAD.left + ((t or 0) - xmin) / (xmax - xmin) * pw end
   local function Y(v) return PAD.bottom + math.max(0, math.min(1, (v or 0) / ymax)) * ph end
-  local minGap = pw
-  for i = 2, n do
-    local gap = X(points[i].t) - X(points[i - 1].t)
-    if gap < minGap then minGap = gap end
-  end
-  local bw = math.max(3, math.min(16, math.floor(minGap * 0.7)))
 
   local labels, fmt = {}, TimeFormat(xmax - xmin)
   local ticks = math.max(2, math.min(6, math.floor(pw / 110)))
@@ -319,20 +356,12 @@ function Chart.DrawCandles(c, points, opts)
   end
   Axes(c, ymax, labels, format)
 
-  local prev, prevX
-  for i, p in ipairs(points) do
-    local x = X(p.t)
-    local lo, hi = p.min or 0, p.max or p.min or 0
-    local clipped = hi > ymax
-    Box(c, x - 0.5, Y(lo), 1, Y(math.min(hi, ymax)) - Y(lo), 0.8, 0.8, 0.8, 0.7)
-    if clipped then Box(c, x - 3, PAD.bottom + ph - 1, 6, 2, 1, 0.3, 0.3, 1) end
-    local p25, p75 = p.p25 or lo, p.p75 or lo
-    Box(c, x - bw / 2, Y(p25), bw, math.max(1, Y(p75) - Y(p25)), 0.3, 0.6, 1, 0.6)
-    local med = p.med or lo
-    Box(c, x - bw / 2, Y(med) - 1, bw, 2, 1, 1, 1, 1)
-    if p.mean then Box(c, x - 2, Y(p.mean) - 2, 4, 4, 1, 0.82, 0.2, 1) end
-    if prev then Line(c, prevX, Y(prev), x, Y(med), 0.3, 0.6, 1, 0.5, 1) end
-    prev, prevX = med, x
+  Band(c, X, Y, points, "min", "max", 0.75, 0.75, 0.75, 0.22)
+  Band(c, X, Y, points, "p25", "p75", 0.3, 0.6, 1, 0.5)
+  Polyline(c, X, Y, points, "mean", 1, 0.82, 0.2, 0.9, 1.5)
+  Polyline(c, X, Y, points, "med", 1, 1, 1, 1, 2, 3)
+  for _, p in ipairs(points) do
+    if p.max and p.max > ymax then Box(c, X(p.t) - 3, PAD.bottom + ph - 1, 6, 2, 1, 0.3, 0.3, 1) end
   end
 
   c.hit = function(px)

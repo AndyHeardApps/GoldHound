@@ -74,8 +74,53 @@ function Scan.Abort(reason)
   frame:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
   Scan.Status(reason)
   ns.Print(reason)
+  if state.wiped then
+    state.wiped = nil
+    Scan.Load() -- bring the previous scan's listings back
+  end
   ns.Fire("SCAN_FAILED", reason)
 end
+
+-------------------------------------------------------------------------------
+-- Auto-scan. While the auction house stays open, a new full scan starts each
+-- time the cooldown runs out, so price history builds up while you stand there.
+-- After a failed scan it waits a few minutes before trying again.
+-------------------------------------------------------------------------------
+local AUTO_RETRY = 180
+local autoTicker
+
+local function AutoTick()
+  if not (ns.settings and ns.settings.autoScan and ns.ahOpen and ns.realm) then return end
+  if state.running or (ns.Refresh and ns.Refresh.IsRunning()) or (ns.Buy and ns.Buy.IsBusy()) then return end
+  if Scan.CooldownRemaining() > 0 then return end
+  if state.autoFailedAt and GetTime() - state.autoFailedAt < AUTO_RETRY then return end
+  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+  ns.Debug("auto-scan starting")
+  Scan.Start(false)
+end
+
+function Scan.AutoEnabled()
+  return ns.settings and ns.settings.autoScan or false
+end
+
+function Scan.SetAuto(on)
+  on = on and true or false
+  ns.settings.autoScan = on
+  if on then
+    if not autoTicker then autoTicker = C_Timer.NewTicker(5, AutoTick) end
+    ns.Print("Auto-scan on: a full scan starts whenever the cooldown ends while the auction house is open.")
+  else
+    if autoTicker then autoTicker:Cancel(); autoTicker = nil end
+    ns.Print("Auto-scan off.")
+  end
+  ns.Fire("AUTOSCAN_CHANGED", on)
+end
+
+ns.On("READY", function()
+  if ns.settings.autoScan and not autoTicker then autoTicker = C_Timer.NewTicker(5, AutoTick) end
+end)
+ns.On("SCAN_FAILED", function() state.autoFailedAt = GetTime() end)
+ns.On("SCAN_COMPLETE", function() state.autoFailedAt = nil end)
 
 -- True when the replicated list reports commodity buyouts per unit rather than
 -- per stack. Detected by comparing one scan listing with a live search (see
@@ -255,6 +300,7 @@ local function StorePrices(done)
   state.items = 0
   Batched(KeyList(), 400, function(key)
     local agg = state.byKey[key]
+    agg.t = now
     if perUnit and ns.IsCommodity(agg.itemID) then
       for _, l in ipairs(agg.listings) do
         l.unit = l.buyout
@@ -340,6 +386,101 @@ local function SaveSnapshot(done)
   end)
 end
 
+-------------------------------------------------------------------------------
+-- Saved listings. The last scan's listings, with any refreshes since, are kept
+-- in the saved variables so opportunities survive a reload or relog. Each key
+-- stores one string of "count:buyout:timeLeft:minBid:bidAmount:owner" records.
+-------------------------------------------------------------------------------
+local function Encode(agg)
+  local parts = {}
+  for _, l in ipairs(agg.listings) do
+    table.insert(parts, ("%d:%.0f:%d:%.0f:%.0f:%s"):format(l.count or 1, l.buyout or 0, l.timeLeft or 0, l.minBid or 0, l.bidAmount or 0, l.owner or ""))
+  end
+  local first = agg.listings[1]
+  return {
+    i = agg.itemID, s = first and first.suffix or 0, n = agg.name, k = first and first.link or nil,
+    t = agg.t, r = agg.refreshed and true or nil, L = table.concat(parts, ";"),
+  }
+end
+
+local function Decode(key, rec)
+  local itemID = rec.i
+  -- Only ask the item cache when the record lacks a link or name: at login that
+  -- would otherwise request thousands of items at once. Icons load lazily.
+  local info = (not rec.k or not rec.n) and ns.ItemInfo(itemID) or nil
+  local link = rec.k or (info and info.link)
+  local name = rec.n or (info and info.name)
+  local icon = info and info.icon
+  local agg = { listings = {}, qty = 0, n = 0, itemID = itemID, name = name, t = rec.t, refreshed = rec.r and rec.t or nil }
+  for part in (rec.L or ""):gmatch("[^;]+") do
+    local count, buyout, timeLeft, minBid, bidAmount, owner = part:match("^(%d+):(%d+):(%d+):(%d+):(%d+):(.*)$")
+    count = tonumber(count)
+    if count and count > 0 then
+      buyout, minBid = tonumber(buyout) or 0, tonumber(minBid) or 0
+      table.insert(agg.listings, {
+        key = key, itemID = itemID, suffix = rec.s or 0, link = link, name = name, icon = icon,
+        count = count, buyout = buyout, unit = buyout / count, minBid = minBid,
+        minIncrement = math.max(1, math.floor(minBid * 0.05)), bidAmount = tonumber(bidAmount) or 0,
+        owner = owner ~= "" and owner or nil, timeLeft = tonumber(timeLeft) or 0, quality = info and info.quality,
+        refreshed = rec.r or nil,
+      })
+      if buyout > 0 then agg.qty = agg.qty + count; agg.n = agg.n + 1 end
+    end
+  end
+  return agg
+end
+
+-- Saves (or drops) the listings of one key after a refresh or a purchase.
+function Scan.SaveKey(key)
+  if not ns.realm or state.running then return end
+  local store = ns.realm.listings
+  if not store then
+    store = { keys = {} }
+    ns.realm.listings = store
+  end
+  store.keys = store.keys or {}
+  local agg = state.byKey[key]
+  if agg and #agg.listings > 0 then store.keys[key] = Encode(agg) else store.keys[key] = nil end
+end
+
+local function SaveListings(done)
+  local keys = {}
+  Batched(KeyList(), 400, function(key)
+    local agg = state.byKey[key]
+    if #agg.listings > 0 then keys[key] = Encode(agg) end
+  end, "Saving listings", function()
+    ns.realm.listings = { t = state.scanTime, keys = keys }
+    done()
+  end)
+end
+
+-- Rebuilds the in-memory listings from the saved copy: at login, and after an
+-- aborted scan has thrown the previous scan away.
+function Scan.Load()
+  local store = ns.realm and ns.realm.listings
+  if state.running or not (store and store.keys) then return 0 end
+  state.byKey, state.byName = {}, {}
+  local listings, items = 0, 0
+  for key, rec in pairs(store.keys) do
+    if rec.i then
+      local agg = Decode(key, rec)
+      if #agg.listings > 0 then
+        state.byKey[key] = agg
+        if agg.name and not state.byName[agg.name] then state.byName[agg.name] = agg.itemID end
+        listings, items = listings + #agg.listings, items + 1
+      end
+    end
+  end
+  state.total, state.items = listings, items
+  if items > 0 then ns.Analysis.Invalidate() end
+  return items
+end
+
+ns.On("READY", function()
+  local items = Scan.Load()
+  if items > 0 then ns.Debug("loaded saved listings for", items, "items") end
+end)
+
 local function Prune()
   local cutoff = state.scanTime - (ns.settings.pruneDays or 30) * 86400
   local prices = ns.realm.prices
@@ -355,15 +496,18 @@ local function Finish()
     StorePrices(function()
       InferSales(function()
         SaveSnapshot(function()
-          local ok, err = pcall(Prune)
-          if not ok then ns.Debug("prune failed", err) end
-          ns.realm.lastScan = state.scanTime
-          state.running = false
-          state.phase = nil
-          local seconds = math.floor(GetTime() - state.startedAt)
-          Scan.Status(("Scan done: %d auctions, %d items in %ds"):format(state.total, state.items or 0, seconds))
-          ns.Print("Scan complete: %d auctions across %d items in %d seconds.", state.total, state.items or 0, seconds)
-          ns.Fire("SCAN_COMPLETE")
+          SaveListings(function()
+            local ok, err = pcall(Prune)
+            if not ok then ns.Debug("prune failed", err) end
+            ns.realm.lastScan = state.scanTime
+            state.running = false
+            state.phase = nil
+            state.wiped = nil
+            local seconds = math.floor(GetTime() - state.startedAt)
+            Scan.Status(("Scan done: %d auctions, %d items in %ds"):format(state.total, state.items or 0, seconds))
+            ns.Print("Scan complete: %d auctions across %d items in %d seconds.", state.total, state.items or 0, seconds)
+            ns.Fire("SCAN_COMPLETE")
+          end)
         end)
       end)
     end)
@@ -396,6 +540,7 @@ local function Process(n)
   state.pending = {}
   state.byKey = {}
   state.byName = {}
+  state.wiped = true -- the previous listings are gone until this scan finishes
   local function step()
     if not state.running then return end
     local stop = math.min(state.index + BATCH, n)
@@ -448,5 +593,6 @@ ns.On("LISTING_BOUGHT", function(listing, quantity)
       break
     end
   end
+  Scan.SaveKey(listing.key)
   ns.Analysis.Invalidate()
 end)
