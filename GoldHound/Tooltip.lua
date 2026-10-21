@@ -21,6 +21,10 @@ local function AddLines(tooltip, link)
   tooltip:AddLine("|cffffd100GoldHound|r", 1, 1, 1)
   if market then
     tooltip:AddDoubleLine("Market value (" .. source .. ")", ns.Money(market), 0.8, 0.8, 0.8, 1, 1, 1)
+    local typical, scans = ns.Pricing.Typical(key)
+    if typical and math.abs(typical - market) > market * 0.02 then
+      tooltip:AddDoubleLine(("Typical price (%d scans)"):format(scans), ns.Money(typical), 0.8, 0.8, 0.8, 1, 1, 1)
+    end
   end
   if entry and entry.m then
     local age = ns.realm.lastScan and entry.t and entry.t < ns.realm.lastScan

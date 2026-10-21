@@ -383,7 +383,8 @@ function Chart.DrawBands(c, points, opts)
     end
     local p = points[i]
     local lines = {
-      { "Lowest", format(p.min) },
+      { "Lowest", format(p.low or p.min) },
+      { "Floor with depth", format(p.min) },
       { "25th percentile", format(p.p25 or p.min) },
       { "Median", format(p.med or p.min) },
       { "Mean", format(p.mean or p.min) },

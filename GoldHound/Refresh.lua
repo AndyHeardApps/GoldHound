@@ -130,7 +130,7 @@ local function StoreKey(key, itemID, listings, now)
   if agg.n > 0 then
     e = e or {}
     local s = ns.Pricing.ListingStats(agg.listings)
-    e.m, e.q, e.n, e.t = s.m, agg.qty, agg.n, now
+    e.m, e.f, e.q, e.n, e.t = s.m, s.f, agg.qty, agg.n, now
     -- Add a price history point unless one was recorded moments ago.
     local lastPoint = e.h and e.h[#e.h]
     if not lastPoint or now - (lastPoint.t or 0) >= 300 then ns.Pricing.RecordHistory(e, s, now) end

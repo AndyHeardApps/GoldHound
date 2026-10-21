@@ -11,6 +11,10 @@ ns.DEFAULTS = {
   minProfit = 5000,      -- 50s minimum profit before an opportunity is shown (0 disables)
   minRoi = 0,            -- minimum return on investment, as a fraction (0.2 = 20%; 0 disables)
   flipDiscount = 0.30,   -- a flip must be at least this far below market value
+  floorDepth = 3,        -- units that must be available at a price before it counts as the floor
+  floorShare = 0.05,     -- ...or this share of the units listed, when that is smaller
+  outlierRatio = 0.6,    -- a floor below this fraction of the typical price is flagged as unusually low
+  scanSound = true,      -- play a sound when a full scan completes
   resetDiscount = 0.35,  -- cheap listings must be this far below the price history to reset
   resetMaxDays = 7,      -- a reset must be sellable within this many days (when rate is known)
   scanCooldown = 900,    -- seconds between full scans (server throttle is ~15 min)
@@ -350,6 +354,7 @@ local function Help()
   ns.Print("  /gh - toggle the window")
   ns.Print("  /gh scan [force] - full auction house scan (AH must be open)")
   ns.Print("  /gh auto [on|off] - auto-scan: rescan whenever the cooldown ends while the AH is open (now %s)", s.autoScan and "on" or "off")
+  ns.Print("  /gh sound - toggle the sound played when a full scan completes (now %s)", s.scanSound and "on" or "off")
   ns.Print("  /gh refresh [force|stop] - re-price only the items your recipes make and use (no 15 minute wait)")
   ns.Print("  /gh minprofit <money> - minimum profit shown, e.g. 1g50s, 0 to disable (now %s)", ns.Money(s.minProfit))
   ns.Print("  /gh minroi <percent> - minimum return on investment, 0 to disable (now %d%%)", (s.minRoi or 0) * 100)
@@ -399,6 +404,9 @@ SlashCmdList.GOLDHOUND = function(msg)
     Help()
   elseif cmd == "scan" then
     ns.Scan.Start(rest == "force")
+  elseif cmd == "sound" then
+    ns.settings.scanSound = not ns.settings.scanSound
+    ns.Print("Scan complete sound %s.", ns.settings.scanSound and "on" or "off")
   elseif cmd == "auto" then
     local on
     if rest == "on" then on = true elseif rest == "off" then on = false else on = not ns.settings.autoScan end

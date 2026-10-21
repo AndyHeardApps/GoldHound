@@ -20,9 +20,10 @@ auction house cut, return on investment, and the item's sale rate.
 | Ledger | | A graph of your net worth over time (liquid gold across your characters, and inventory plus auctions at market value), above your actual sales, recorded when you collect gold from the mailbox. |
 | Shopping | | A shopping list for a chosen craft: reagents needed, what you already have, where to get each one, and a Buy button for auction house commodities. Recipe headers and craft steps show the current profit per item made, with per-craft and planned totals in the tooltip. |
 
-Clicking any row that is about an item opens its price history: one bar per
-observation showing the lowest and highest listing, the 25th to 75th percentile
-box, the median and the mean, with the exact numbers on hover. Every row also
+Clicking any row that is about an item opens its price history: a grey band
+from the floor to the highest listing, a blue band for the 25th to 75th
+percentile, and lines for the median and the mean, with the exact numbers on
+hover. Every row also
 has a small refresh button that re-prices that item on the spot; on a craft (in
 Crafting or Plan) it re-prices the product and all its reagents, including
 intermediates you craft yourself.
@@ -33,6 +34,21 @@ each duration, and a suggested price with a button to apply it.
 
 Item tooltips gain market value, cheapest listing, quantity listed, sale rate,
 craft cost, vendor price and disenchant value.
+
+## Market value
+
+Suggestions are priced at what you could actually sell for, not at an average.
+For each item the latest scan or refresh gives a **floor with depth**: walking
+the listings from the cheapest upwards, the price at which a few units are
+available (the "Floor depth" setting, or 5% of the units listed for small
+markets). The cheapest listing sets the floor unless it is a lone stack with
+nothing behind it. The **typical** price is the median floor over the last ten
+scans. Market value is the current floor, capped at the typical price so a
+short spike is not counted on. A floor far below typical (the "Low floor
+warning" setting) is still used, since you would have to undercut it today,
+but it is labelled as a low floor in tooltips and is what the Reset category
+looks for. Crafting revenue, net worth and the posting helper all use this
+market value.
 
 ## Sale rates
 

@@ -314,7 +314,7 @@ local function StorePrices(done)
     if agg.n > 0 then
       local s = ns.Pricing.ListingStats(agg.listings)
       local e = prices[key] or {}
-      e.m, e.q, e.n, e.t = s.m, agg.qty, agg.n, now
+      e.m, e.f, e.q, e.n, e.t = s.m, s.f, agg.qty, agg.n, now
       ns.Pricing.RecordHistory(e, s, now)
       prices[key] = e
       state.items = state.items + 1
@@ -506,6 +506,7 @@ local function Finish()
             local seconds = math.floor(GetTime() - state.startedAt)
             Scan.Status(("Scan done: %d auctions, %d items in %ds"):format(state.total, state.items or 0, seconds))
             ns.Print("Scan complete: %d auctions across %d items in %d seconds.", state.total, state.items or 0, seconds)
+            if ns.settings.scanSound then pcall(PlaySound, SOUNDKIT and SOUNDKIT.ALARM_CLOCK_WARNING_2 or 12867, "Master") end
             ns.Fire("SCAN_COMPLETE")
           end)
         end)

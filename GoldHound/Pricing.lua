@@ -15,7 +15,7 @@ function Pricing.GetEntry(key)
   return ns.realm and ns.realm.prices[key] or nil
 end
 
--- Median of the cheapest buyout seen in the most recent scans.
+-- Median of the floor price seen in the most recent scans: the "typical" price.
 function Pricing.HistoryMedian(key, minScans, maxScans)
   local e = Pricing.GetEntry(key)
   if not e or not e.h then return nil, 0 end
@@ -23,35 +23,54 @@ function Pricing.HistoryMedian(key, minScans, maxScans)
   if n < (minScans or 1) then return nil, n end
   local values = {}
   local first = math.max(1, n - (maxScans or 10) + 1)
-  for i = first, n do table.insert(values, e.h[i].m) end
+  for i = first, n do table.insert(values, e.h[i].f or e.h[i].m) end
   return Median(values), n
 end
 
--- Quantity-weighted 25th percentile price of the current scan's listings for an
--- item, computed once per scan per item. `exclude` only affects the count of
--- other listings, which is what decides whether the value is trustworthy.
+-- What the item typically sells for: the median floor over recent scans.
+function Pricing.Typical(key)
+  return Pricing.HistoryMedian(key, 3)
+end
+
+-- The floor with depth: walking the listings from the cheapest upwards, the
+-- unit price at which a small quantity is actually available. That is the
+-- minimum unless the minimum is a lone listing with nothing behind it. The
+-- quantity needed is the floor depth setting, or a share of the units listed
+-- when the market is small, so a single listing still sets the floor for a
+-- thinly traded item. `exclude` is a listing to leave out, the one you are
+-- thinking of buying. Returns the floor and the number of listings behind it.
+function Pricing.FloorWithDepth(listings, exclude)
+  local total, n = 0, 0
+  for _, l in ipairs(listings) do
+    if l.buyout > 0 and l ~= exclude then total = total + l.count; n = n + 1 end
+  end
+  if n == 0 then return nil, 0 end
+  local s = ns.settings or {}
+  local need = math.min(s.floorDepth or 3, math.max(1, total * (s.floorShare or 0.05)))
+  local run, last = 0, nil
+  for _, l in ipairs(listings) do -- sorted by unit price ascending
+    if l.buyout > 0 and l ~= exclude then
+      run = run + l.count
+      last = l.unit
+      if run >= need then return l.unit, n end
+    end
+  end
+  return last, n
+end
+
+-- The current floor for an item from the latest scan or refresh, cached per
+-- scan when no listing is excluded. Returns the floor and the number of
+-- listings behind it, which decides whether the value is trustworthy.
 function Pricing.ScanReference(key, exclude)
   local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[key]
   if not agg then return nil, 0 end
+  if exclude then return Pricing.FloorWithDepth(agg.listings, exclude) end
   if agg.ref == nil then
-    local total = 0
-    for _, l in ipairs(agg.listings) do
-      if l.buyout > 0 then total = total + l.count end
-    end
-    local target, running, ref = total * 0.25, 0, false
-    for _, l in ipairs(agg.listings) do -- sorted by unit price ascending
-      if l.buyout > 0 then
-        running = running + l.count
-        ref = l.unit
-        if running >= target then break end
-      end
-    end
-    agg.ref = ref
+    local f, n = Pricing.FloorWithDepth(agg.listings)
+    agg.ref, agg.refN = f or false, n
   end
   if agg.ref == false then return nil, 0 end
-  local others = agg.n - ((exclude and exclude.buyout > 0) and 1 or 0)
-  if others <= 0 then return nil, 0 end
-  return agg.ref, others
+  return agg.ref, agg.refN or agg.n
 end
 
 -- What it costs right now to buy `qty` units (default 1), from the cheapest
@@ -85,15 +104,22 @@ function Pricing.AcquireCost(key, qty)
   return nil
 end
 
--- Best estimate of what one unit sells for. Returns copper and a source tag.
+-- Best estimate of what one unit sells for right now: the current floor, but
+-- never more than the typical price, since a spike may not last. When the
+-- floor is well below typical the source says so; that is a reset candidate,
+-- not a price to count on. Returns copper and a source tag.
 function Pricing.GetMarket(key, exclude)
-  local hist = Pricing.HistoryMedian(key, 3)
-  local ref = Pricing.ScanReference(key, exclude)
-  if hist and ref then return math.min(hist, ref), "history" end
-  if hist then return hist, "history" end
-  if ref then return ref, "scan" end
+  local typical = Pricing.Typical(key)
+  local floor = Pricing.ScanReference(key, exclude)
+  if floor and typical then
+    if floor < typical * (ns.settings.outlierRatio or 0.6) then return floor, "low floor" end
+    if floor <= typical then return floor, "floor" end
+    return typical, "typical"
+  end
+  if floor then return floor, "floor" end
+  if typical then return typical, "typical" end
   local e = Pricing.GetEntry(key)
-  if e and e.m then return e.m, "last scan" end
+  if e and (e.f or e.m) then return e.f or e.m, "last scan" end
   return nil
 end
 
@@ -106,8 +132,9 @@ function Pricing.HasEvidence(key, exclude)
 end
 
 -- Quantity-weighted statistics over listings sorted by unit price ascending.
--- Returns nil when nothing has a buyout, else { m = lowest, l = 25th percentile,
--- d = median, u = 75th percentile, x = highest, a = mean, q = units, n = listings }.
+-- Returns nil when nothing has a buyout, else { m = lowest, f = floor with depth,
+-- l = 25th percentile, d = median, u = 75th percentile, x = highest, a = mean,
+-- q = units, n = listings }.
 function Pricing.ListingStats(listings)
   local total, n = 0, 0
   for _, l in ipairs(listings) do
@@ -128,6 +155,7 @@ function Pricing.ListingStats(listings)
     end
   end
   s.a = sum / total
+  s.f = Pricing.FloorWithDepth(listings) or s.m
   return s
 end
 
@@ -136,6 +164,7 @@ end
 function Pricing.RecordHistory(e, s, now)
   e.h = e.h or {}
   local point = { t = now, m = s.m, q = s.q, n = s.n }
+  if s.f and s.f ~= s.m then point.f = s.f end
   if s.n > 1 then
     point.a, point.d, point.l, point.u, point.x = ns.Round(s.a), s.d, s.l, s.u, s.x
   end

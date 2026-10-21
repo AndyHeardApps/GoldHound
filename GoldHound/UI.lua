@@ -220,6 +220,8 @@ local SETTINGS = {
   { key = "minProfit", label = "Minimum profit", kind = "money", hint = "Suggestions below this profit are hidden. Example: 1g 50s. Set 0 to use only the ROI threshold." },
   { key = "minRoi", label = "Minimum ROI %", kind = "ratio", hint = "Suggestions returning less than this on what you spend are hidden. 0 switches it off; both thresholds apply when set." },
   { key = "flipDiscount", label = "Flip discount %", kind = "percent", hint = "A flip or snipe must be at least this far below market value." },
+  { key = "floorDepth", label = "Floor depth (units)", kind = "number", hint = "A price counts as the market floor once this many units are available at or below it, so a lone cheap listing is skipped. Small markets use 5% of the units listed instead." },
+  { key = "outlierRatio", label = "Low floor warning %", kind = "percent", hint = "A floor below this percentage of the typical price (the median floor over recent scans) is marked as unusually low." },
   { key = "resetDiscount", label = "Reset discount %", kind = "percent", hint = "Cheap listings must be this far below the price history to count as a reset." },
   { key = "resetMaxDays", label = "Reset max days", kind = "number", hint = "A reset must be sellable within this many days when the sale rate is known." },
   { key = "ahCut", label = "Auction house cut %", kind = "percent", hint = "Taken off every sale estimate. 5 for a faction auction house." },
@@ -228,6 +230,7 @@ local SETTINGS = {
   { key = "craftCooldown", label = "Craft refresh cooldown (minutes)", kind = "minutes", hint = "Local wait between craft refreshes. These are per-item searches with no server throttle; 0 allows back-to-back refreshes." },
   { key = "historySize", label = "Price history (points)", kind = "number", hint = "Price observations kept per item for the price chart and the market median. Each full scan or refresh adds one." },
   { key = "showTooltip", label = "Tooltip lines", kind = "toggle", hint = "Show GoldHound prices on item tooltips." },
+  { key = "scanSound", label = "Scan complete sound", kind = "toggle", hint = "Play a sound when a full scan finishes, so you notice while tabbed out or AFK." },
 }
 
 local FILTERS = {
@@ -729,7 +732,7 @@ local function Build()
   frame.settings:SetSize(WIDTH - 36, HEIGHT + LIST_TOP)
   frame.settings.fields = {}
   for i, def in ipairs(SETTINGS) do
-    local y = -(i - 1) * 34
+    local y = -(i - 1) * 31
     local label = frame.settings:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     label:SetPoint("TOPLEFT", 10, y - 4)
     label:SetWidth(190)
@@ -759,7 +762,7 @@ local function Build()
     frame.settings.fields[def.key] = field
   end
   local note = frame.settings:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  note:SetPoint("TOPLEFT", 10, -(#SETTINGS) * 34 - 10)
+  note:SetPoint("TOPLEFT", 10, -(#SETTINGS) * 31 - 6)
   note:SetWidth(WIDTH - 60)
   note:SetJustifyH("LEFT")
   note:SetText("Changes apply when you press Enter or leave the box. The same values can be set with /gh commands.")
@@ -808,6 +811,9 @@ function UI.ApplySetting(def, box)
   end
   if ns.settings[def.key] ~= value then
     ns.settings[def.key] = value
+    if def.key == "floorDepth" then -- the per-scan floor cache depends on it
+      for _, agg in pairs(ns.scan.byKey or {}) do agg.ref = nil end
+    end
     ns.Analysis.Invalidate()
   end
   box:SetText(SettingText(def))
@@ -1203,7 +1209,7 @@ local function BuildItemChart()
   f.legend:SetPoint("BOTTOMLEFT", 14, 10)
   f.legend:SetPoint("RIGHT", -14, 0)
   f.legend:SetJustifyH("LEFT")
-  f.legend:SetText("Grey area: lowest to highest listing. Blue area: 25th to 75th percentile of the units listed. White line with dots: median at each observation. Yellow line: mean. A red tick at the top means the highest listing was off the scale. Hover for the numbers.")
+  f.legend:SetText("Grey area: floor (cheapest price with a few units behind it) to highest listing. Blue area: 25th to 75th percentile of the units listed. White line with dots: median at each observation. Yellow line: mean. A red tick at the top means the highest listing was off the scale. Hover for the numbers.")
   itemChart = f
 end
 
@@ -1217,7 +1223,7 @@ function UI.ShowItemChart(key, name)
   local entry = ns.Pricing.GetEntry(key)
   local points = {}
   for _, h in ipairs(entry and entry.h or {}) do
-    table.insert(points, { t = h.t, min = h.m, p25 = h.l or h.m, med = h.d or h.m, p75 = h.u or h.m, max = h.x or h.m, mean = h.a or h.m, qty = h.q, n = h.n })
+    table.insert(points, { t = h.t, min = h.f or h.m, low = h.m, p25 = h.l or h.m, med = h.d or h.m, p75 = h.u or h.m, max = h.x or h.m, mean = h.a or h.m, qty = h.q, n = h.n })
   end
   if #points == 0 then
     f.sub:SetText("No price history for this item yet. A point is added by every full scan and by each refresh of the item.")
