@@ -200,8 +200,12 @@ local function Nearest(points, t)
   return best
 end
 
+local Band -- defined with the band chart below; also fills areas under lines
+
 -- Overlapping lines over time.
--- series: { { name, color = { r, g, b }, points = { { t, value }, ... } sorted by t }, ... }
+-- series: { { name, color = { r, g, b }, points = { { t, value }, ... } sorted by t,
+--            thickness = 2, fill = alpha (fills the area under the line) }, ... }
+-- Series are drawn in order, so put filled ones first.
 -- opts: empty (text when nothing to draw), format (value -> text), extra(t, lines) adds tooltip lines.
 function Chart.DrawLines(c, series, opts)
   Reset(c)
@@ -240,8 +244,13 @@ function Chart.DrawLines(c, series, opts)
     local r, g, b = s.color[1], s.color[2], s.color[3]
     local pts = Downsample(s.points, maxPoints)
     s.drawn = pts
+    if s.fill and #pts > 1 then
+      local area = {}
+      for _, p in ipairs(pts) do table.insert(area, { t = p[1], v = p[2], z = 0 }) end
+      Band(c, X, Y, area, "z", "v", r, g, b, s.fill)
+    end
     for i = 2, #pts do
-      Line(c, X(pts[i - 1][1]), Y(pts[i - 1][2]), X(pts[i][1]), Y(pts[i][2]), r, g, b, 1, 2)
+      Line(c, X(pts[i - 1][1]), Y(pts[i - 1][2]), X(pts[i][1]), Y(pts[i][2]), r, g, b, 1, s.thickness or 2)
     end
     if #pts == 1 then Box(c, X(pts[1][1]) - 2, Y(pts[1][2]) - 2, 4, 4, r, g, b, 1) end
     Box(c, lx, ly, 12, 3, r, g, b, 1)
@@ -277,7 +286,7 @@ end
 -- points: { { t, min, p25, med, p75, max, mean, qty, n }, ... } sorted by t
 local STRIP = 2
 
-local function Band(c, X, Y, points, loKey, hiKey, r, g, b, a)
+Band = function(c, X, Y, points, loKey, hiKey, r, g, b, a)
   local n = #points
   local function at(p, key) return p[key] or p.min or 0 end
   if n == 1 then

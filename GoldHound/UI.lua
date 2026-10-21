@@ -1140,14 +1140,16 @@ end
 function UI.DrawWorth()
   if not frame or not frame.worth then return end
   local raw = ns.Worth.Points()
-  local gold, assets = {}, {}
+  local gold, assets, total = {}, {}, {}
   for _, p in ipairs(raw) do
     table.insert(gold, { p.t, p.g or 0 })
     table.insert(assets, { p.t, (p.i or 0) + (p.a or 0) })
+    table.insert(total, { p.t, (p.g or 0) + (p.i or 0) + (p.a or 0) })
   end
   ns.Chart.DrawLines(frame.worth, {
-    { name = "Gold", color = { 1, 0.82, 0.2 }, points = gold },
-    { name = "Assets (inventory + auctions at market value)", color = { 0.35, 0.65, 1 }, points = assets },
+    { name = "Total", color = { 0.55, 0.9, 0.55 }, points = total, fill = 0.18, thickness = 2 },
+    { name = "Gold", color = { 1, 0.82, 0.2 }, points = gold, thickness = 1 },
+    { name = "Assets (inventory + auctions at market value)", color = { 0.35, 0.65, 1 }, points = assets, thickness = 1 },
   }, {
     empty = "Net worth is sampled as you play: gold across your characters, plus bags, bank, mail and auctions at market value.",
     extra = function(t, lines)
