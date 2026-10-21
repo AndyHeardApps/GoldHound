@@ -97,11 +97,10 @@ local RESTOCK_COLUMNS = {
 
 local LEDGER_COLUMNS = {
   { label = "When", width = 110, text = function(r) return date("%d %b %H:%M", r.t) end, value = function(r) return r.t end },
-  { label = "Item", width = 250, text = function(r) return r.name end, value = function(r) return r.name or "" end },
+  { label = "Item", width = 360, text = function(r) return r.name end, value = function(r) return r.name or "" end },
   { label = "Qty", width = 50, align = "RIGHT", text = function(r) return tostring(r.units or 1) end, value = function(r) return r.units or 1 end },
   { label = "Gross", width = 96, align = "RIGHT", text = function(r) return Money(r.gross) end, value = function(r) return r.gross or 0 end },
   { label = "Net", width = 96, align = "RIGHT", text = function(r) return ProfitText(r.net) end, value = function(r) return r.net or 0 end },
-  { label = "Buyer", width = 110, text = function(r) return r.buyer or "" end, value = function(r) return r.buyer or "" end },
   { label = "Character", width = 100, text = function(r) return r.char or "" end, value = function(r) return r.char or "" end },
 }
 
@@ -189,7 +188,7 @@ local TABS = {
     rows = function() return ns.Analysis.Restock() end,
     empty = "Nothing to restock. Items you have sold at least twice appear here when they are scarce on the auction house.",
     tooltip = CommonTooltip },
-  { id = "ledger", label = "Ledger", columns = LEDGER_COLUMNS, sort = 1, chart = true,
+  { id = "ledger", label = "Ledger", columns = LEDGER_COLUMNS, sort = 1, chart = true, noRefresh = true,
     rows = function() return ns.realm and ns.realm.ledger.recent or {} end,
     empty = "No sales recorded yet. Sales are recorded when you collect auction gold from the mailbox.",
     tooltip = function(row, tt) tt:AddDoubleLine("Net after cut and deposit", ProfitText(row.net), 0.8, 0.8, 0.8, 1, 1, 1) end },
@@ -1101,7 +1100,7 @@ function UI.Render()
       end
       row.icon:SetTexture(icon or 134400)
       row.icon:SetShown(row.hasIcon)
-      local canRefresh = data.kind ~= "recipe" and UI.RowKey(data) ~= nil or (data.kind == "recipe" and data.recipeID ~= nil)
+      local canRefresh = not tab.noRefresh and (data.kind ~= "recipe" and UI.RowKey(data) ~= nil or (data.kind == "recipe" and data.recipeID ~= nil))
       row.refresh:SetShown(canRefresh)
       row.refresh:SetEnabled(ready)
       row.refresh:SetAlpha(ready and 1 or 0.35)
