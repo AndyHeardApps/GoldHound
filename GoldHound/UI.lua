@@ -57,16 +57,28 @@ local OPP_COLUMNS = {
   { label = "", width = 62, button = true },
 }
 
+-- Materials already owned: whole crafts covered, else the share of one craft's cost.
+local function OwnedText(r)
+  if (r.ownedCrafts or 0) >= 1 then return ("%d craft%s"):format(r.ownedCrafts, r.ownedCrafts == 1 and "" or "s") end
+  if (r.ownedFrac or 0) > 0 then return ("%d%%"):format(r.ownedFrac * 100) end
+  return ""
+end
+local function OwnedValue(r)
+  if (r.ownedCrafts or 0) >= 1 then return r.ownedCrafts + 1 end
+  return r.ownedFrac or 0
+end
+
 local CRAFT_COLUMNS = {
-  { label = "Recipe", width = 200, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
-  { label = "Profession", width = 74, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
-  { label = "Who", width = 64, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
-  { label = "Mats/craft", width = 90, align = "RIGHT", text = function(r) return Money(r.cost) .. (r.partial and GREY .. "*" .. R or "") end, value = function(r) return r.cost or 0 end },
-  { label = "Sells for", width = 90, align = "RIGHT", text = function(r) return Money(r.market) end, value = function(r) return r.market or 0 end },
+  { label = "Recipe", width = 176, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Profession", width = 66, text = function(r) return r.prof or "" end, value = function(r) return r.prof or "" end },
+  { label = "Who", width = 60, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
+  { label = "Mats/craft", width = 86, align = "RIGHT", text = function(r) return Money(r.cost) .. (r.partial and GREY .. "*" .. R or "") end, value = function(r) return r.cost or 0 end },
+  { label = "In bags", width = 56, align = "RIGHT", text = OwnedText, value = OwnedValue },
+  { label = "Sells for", width = 86, align = "RIGHT", text = function(r) return Money(r.market) end, value = function(r) return r.market or 0 end },
   { label = "Profit", width = 90, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
-  { label = "ROI", width = 44, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
-  { label = "Sales/day", width = 66, align = "RIGHT", text = function(r) return ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
-  { label = "Age", width = 46, align = "RIGHT", text = Age, value = function(r) return r.t or 0 end },
+  { label = "ROI", width = 40, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
+  { label = "Sales/day", width = 60, align = "RIGHT", text = function(r) return ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
+  { label = "Age", width = 42, align = "RIGHT", text = Age, value = function(r) return r.t or 0 end },
   { label = "", width = 62, button = true },
 }
 

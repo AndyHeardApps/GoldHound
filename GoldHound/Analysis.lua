@@ -18,7 +18,7 @@ function A.Invalidate()
   ns.Fire("ANALYSIS_DIRTY")
 end
 
-for _, ev in ipairs({ "SCAN_COMPLETE", "RECIPES_UPDATED", "VENDOR_UPDATED", "LEDGER_UPDATED", "CHARS_UPDATED" }) do
+for _, ev in ipairs({ "SCAN_COMPLETE", "RECIPES_UPDATED", "VENDOR_UPDATED", "LEDGER_UPDATED", "CHARS_UPDATED", "INVENTORY_UPDATED" }) do
   ns.On(ev, function() ns.Debounce("analysis", 0.3, A.Invalidate) end)
 end
 -- Item data arrives in bursts of thousands after a scan; recompute rarely.
@@ -473,14 +473,36 @@ function A.Crafts()
           if A.Passes(profit, cost.total) then
             local info = ns.ItemInfo(r.out)
             local key = ns.KeyFor(r.out, 0)
+            -- Materials already in your bags and banks (any character on the
+            -- realm), as a cost split for one craft and as whole crafts covered.
+            local owned, toBuy, ownedCrafts, anyOwned, held = 0, 0, math.huge, false, {}
+            for _, p in ipairs(cost.reagents) do
+              local have = ns.Inventory.Count(p.item)
+              held[p.item] = have
+              if have > 0 then anyOwned = true end
+              local used = math.min(have, p.qty)
+              if p.unit then
+                owned = owned + used * p.unit
+                toBuy = toBuy + (p.qty - used) * p.unit
+              end
+              ownedCrafts = math.min(ownedCrafts, math.floor(have / p.qty))
+            end
+            if ownedCrafts == math.huge then ownedCrafts = 0 end
+            local ownedFrac = cost.total > 0 and owned / cost.total or 0
+            local matsText = ns.Money(cost.total) .. (cost.complete and "" or " (partial)")
+            if anyOwned then matsText = matsText .. (" (owned %s, buy %s)"):format(ns.Money(owned), ns.Money(toBuy)) end
             local lines = {
               { "Sells for", ns.Money(value) .. (cost.avgOut ~= 1 and (" each, makes %.1f"):format(cost.avgOut) or "") },
               { "Listed now", tostring(Pricing.Listed(key)) },
-              { "Materials per craft", ns.Money(cost.total) .. (cost.complete and "" or " (partial)") },
+              { "Materials per craft", matsText },
             }
+            if ownedCrafts > 0 then
+              table.insert(lines, { "Crafts from what you own", ("%d (materials worth %s)"):format(ownedCrafts, ns.Money(cost.total * ownedCrafts)) })
+            end
             for _, p in ipairs(cost.reagents) do
               local mi = ns.ItemInfo(p.item)
-              table.insert(lines, { ("  %s x%d (%s)"):format(mi and mi.name or ("item " .. p.item), p.qty, SourceText(p)), p.unit and ns.Money(p.unit * p.qty) or "|cff9d9d9dunknown|r" })
+              local have = held[p.item] or 0
+              table.insert(lines, { ("  %s x%d (%s)%s"):format(mi and mi.name or ("item " .. p.item), p.qty, SourceText(p), have > 0 and (", have %d"):format(have) or ""), p.unit and ns.Money(p.unit * p.qty) or "|cff9d9d9dunknown|r" })
             end
             local planned = ns.UI and ns.UI.PlannedCrafts and ns.UI.PlannedCrafts(recipeID) or 0
             if planned > 0 then table.insert(lines, 1, { "In plan", planned .. " crafts" }) end
@@ -488,6 +510,7 @@ function A.Crafts()
               cat = "craft", key = key, recipeID = recipeID, itemID = r.out, link = info and info.link, name = r.name, icon = r.icon,
               prof = r.prof, who = who, qty = cost.avgOut, cost = cost.total, revenue = revenue, profit = profit, market = value,
               craftCost = cost, partial = not cost.complete,
+              ownedCost = anyOwned and owned or nil, buyCost = anyOwned and toBuy or nil, ownedFrac = ownedFrac, ownedCrafts = ownedCrafts,
               action = { label = "Add", fn = function() ns.UI.ShowShopping(recipeID) end }, lines = lines,
             }))
           end
