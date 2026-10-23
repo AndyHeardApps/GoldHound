@@ -17,6 +17,7 @@ auction house cut, return on investment, and the item's sale rate.
 | Opportunities | Vendor buy | Limited-stock vendor items and vendor recipes that resell for more on the AH. Unlimited vendor junk is deliberately excluded. |
 | Crafting | Craft | Recipes your characters know whose product sells for more than the materials. Each material is costed at the cheapest of vendor, what the auction house charges right now (the cheapest current listings from the last scan or refresh), or crafting it yourself from another recipe you know (smelting your own bars, for example). The product is valued at market. When you already hold some of the materials across your characters, the **Mats/craft** cell shows the split as owned (green) + to buy = total, or the whole cost in green when you own everything for the craft. The tooltip lists how many of each reagent you have and how many crafts your stock covers. Owned materials are still costed at market, since you could sell them instead. |
 | Restock | Restock | Items you have sold at least twice that are now scarce on the auction house. |
+| Levelling | | The cheapest way to level a profession with the recipes a character already knows. Pick the character and profession, set a target skill (the current cap by default), and the plan lists which recipe to craft for each stretch of points, how many crafts to expect, the materials (with the owned + buy split), what the products bring back, and the net cost or profit per craft, per point and per step. **Add** puts a step's crafts in the Plan tab; **Add all to Plan** sends the whole route. **All recipes** shows every recipe that can still give a point at the current skill instead. See [Levelling](#levelling). |
 | Ledger | | A graph of your net worth over time (liquid gold across your characters, and inventory plus auctions at market value), above your actual sales, recorded when you collect gold from the mailbox. |
 | Shopping | | A shopping list for a chosen craft: reagents needed, what you already have, where to get each one, and a Buy button for auction house commodities. Recipe headers and craft steps show the current profit per item made, with per-craft and planned totals in the tooltip. |
 
@@ -49,6 +50,25 @@ warning" setting) is still used, since you would have to undercut it today,
 but it is labelled as a low floor in tooltips and is what the Reset category
 looks for. Crafting revenue, net worth and the posting helper all use this
 market value.
+
+## Levelling
+
+Each craft is costed at the materials (vendor, auction house or crafted
+yourself, as in the Crafting tab) less what the product brings back: the market
+value after the cut when the item has a known sale rate, otherwise what a
+vendor pays (the "Levelling: vendor value only" setting forces the vendor
+price). Enchants bring nothing back. The chance of a skill point is taken from
+the recipe colour: orange 100%, yellow 75%, green 33%, grey nothing. For every
+point between the current skill and the target, the recipe with the lowest net
+cost per expected point is chosen, and runs of the same recipe become one step.
+
+The game reports each recipe's colour now and the skill at which it goes grey,
+but not where it turns yellow or green. GoldHound records the skill at which
+each colour has been seen every time a profession window opens, and brackets
+the change points from that; until then they are assumed 20 and 10 points
+below grey, the spacing most recipes use. Estimated thresholds are marked with
+"~" in the tooltip. Opening the profession window at new skill levels tightens
+them, and colours are only known for characters that have opened the window.
 
 ## Sale rates
 

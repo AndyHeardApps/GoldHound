@@ -90,10 +90,23 @@ local function Capture(verbose)
         rec.reagents = reagents
         rec.complete = complete and #reagents > 0
         rec.enchant = (schematic.recipeType == RECIPE_ENCHANT) or info.isEnchantingRecipe or false
-        rec.difficulty = info.relativeDifficulty
-        rec.trivial = info.maxTrivialLevel
         rec.chars = rec.chars or {}
-        rec.chars[ns.charKey] = true
+        -- Difficulty is per character: the same recipe is orange for one and
+        -- grey for another. d is the colour now (0 orange, 1 yellow, 2 green,
+        -- 3 grey), g the skill at which it goes grey, s the skill it was seen
+        -- at, n the points a craft gives.
+        local d, skill = info.relativeDifficulty, prof.skillLevel or 0
+        rec.chars[ns.charKey] = { d = d, g = info.maxTrivialLevel, s = skill, n = info.numSkillUps, t = time() }
+        -- Observed skill range for each colour, shared by all characters since
+        -- the thresholds belong to the recipe. These bracket where the colour
+        -- changes, which the game does not expose directly.
+        if d ~= nil and skill > 0 then
+          rec.seen = rec.seen or {}
+          local o = rec.seen[d]
+          if not o then rec.seen[d] = { lo = skill, hi = skill }
+          else o.lo, o.hi = math.min(o.lo, skill), math.max(o.hi, skill) end
+        end
+        rec.difficulty, rec.trivial = nil, nil
         rec.t = time()
         if verbose and not sample then
           sample = ("%s -> item %s x%d-%d, %d reagents"):format(rec.name or "?", tostring(rec.out), rec.qmin, rec.qmax, #reagents)

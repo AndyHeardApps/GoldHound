@@ -24,6 +24,7 @@ Refresh.lua
 Worth.lua
 Chart.lua
 Plan.lua
+Levelling.lua
 Posting.lua
 Tooltip.lua
 UI.lua

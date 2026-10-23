@@ -15,6 +15,7 @@ ns.DEFAULTS = {
   floorShare = 0.05,     -- ...or this share of the units listed, when that is smaller
   outlierRatio = 0.6,    -- a floor below this fraction of the typical price is flagged as unusually low
   scanSound = true,      -- play a sound when a full scan completes
+  levelVendorOnly = false, -- levelling planner values products at vendor price only
   resetDiscount = 0.35,  -- cheap listings must be this far below the price history to reset
   resetMaxDays = 7,      -- a reset must be sellable within this many days (when rate is known)
   scanCooldown = 900,    -- seconds between full scans (server throttle is ~15 min)

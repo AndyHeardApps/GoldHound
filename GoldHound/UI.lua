@@ -12,7 +12,7 @@ local HEIGHT = -LIST_TOP + 22 + NUM_ROWS * ROW_HEIGHT + 40
 local GREY, GREEN, RED, R = "|cff9d9d9d", "|cff33ff33", "|cffff4444", "|r"
 
 local frame
-local state = { tab = "opps", filter = "all", offset = 0, sortIndex = nil, sortDesc = true, search = "", rows = {}, shopping = {} }
+local state = { tab = "opps", filter = "all", offset = 0, sortIndex = nil, sortDesc = true, search = "", rows = {}, shopping = {}, level = { mode = "plan" } }
 
 local function ChartRows() return state.tab == "ledger" and CHART_ROWS or 0 end
 
@@ -145,6 +145,74 @@ local PLAN_COLUMNS = {
   { label = "", width = 62, button = true },
 }
 
+-- Net cost of a craft or a point while levelling: what it costs after the
+-- product is sold, or in green what it earns.
+local function NetText(v)
+  if v == nil then return Unknown() end
+  if v <= 0 then return GREEN .. "+" .. ns.Money(-v) .. R end
+  return ns.Money(v)
+end
+
+local function ColourCell(r)
+  local text = ns.Levelling.ColourText(r.d1)
+  if r.d2 ~= nil and r.d2 ~= r.d1 then text = text .. GREY .. ", " .. R .. ns.Levelling.ColourText(r.d2) end
+  return text
+end
+
+local LEVEL_COLUMNS = {
+  { label = "Recipe", width = 190, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
+  { label = "Points", width = 60, align = "RIGHT", text = function(r) if r.from then return ("%d-%d"):format(r.from, r.to) end return "" end, value = function(r) return r.from or 0 end },
+  { label = "Colour", width = 76, text = ColourCell, value = function(r) return r.d1 or 9 end },
+  { label = "Crafts", width = 46, align = "RIGHT", text = function(r) if not r.crafts then return Unknown() end return ("%.1f"):format(r.crafts) end, value = function(r) return r.crafts or 9999 end },
+  { label = "Mats own + buy", width = 116, align = "RIGHT", text = MatsText, value = function(r) return r.cost or 0 end },
+  { label = "Brings back", width = 70, align = "RIGHT", text = function(r) return Money(r.value) end, value = function(r) return r.value or 0 end },
+  { label = "Net/craft", width = 76, align = "RIGHT", text = function(r) return NetText(r.netCraft) end, value = function(r) return r.netCraft or 0 end },
+  { label = "Net/point", width = 76, align = "RIGHT", text = function(r) return NetText(r.netPoint) end, value = function(r) return r.netPoint or math.huge end },
+  { label = "Net total", width = 76, align = "RIGHT", text = function(r) if r.netTotal == nil then return "" end return NetText(r.netTotal) end, value = function(r) return r.netTotal or 0 end },
+  { label = "", width = 62, button = true },
+}
+
+-- The character and profession the Levelling tab is planning for.
+local function LevelOption()
+  local options = ns.Levelling.Options()
+  if state.level.id then
+    for _, o in ipairs(options) do if o.id == state.level.id then return o end end
+  end
+  for _, o in ipairs(options) do if o.charKey == ns.charKey then return o end end
+  return options[1]
+end
+
+function UI.SelectLevelOption(id)
+  state.level.id, state.level.target = id, nil
+  state.offset = 0
+  UI.Refresh()
+end
+
+function UI.LevelRows()
+  local opt = LevelOption()
+  state.levelOption, state.levelPlan = opt, nil
+  if not opt then return {} end
+  local target = state.level.target or opt.max
+  local plan = ns.Levelling.Plan(opt.charKey, opt.prof, target)
+  state.levelPlan = plan
+  if state.level.mode == "all" then
+    local rows = ns.Levelling.AllRows(plan)
+    table.sort(rows, function(a, b) return (a.netPoint or math.huge) < (b.netPoint or math.huge) end)
+    return rows
+  end
+  return ns.Levelling.PlanRows(plan)
+end
+
+-- Puts every step of the current plan into the shopping list.
+function UI.AddLevelPlan()
+  local plan = state.levelPlan
+  if not plan or #plan.steps == 0 then return end
+  for _, step in ipairs(plan.steps) do
+    UI.ShowShopping(step.c.recipeID, math.ceil(step.crafts - 0.001))
+  end
+  ns.Print("Added %d recipes from the levelling plan to the Plan tab.", #plan.steps)
+end
+
 -- Current craft profit for a recipe: per item made, per craft, and the inputs.
 local function CraftProfit(recipeID)
   local r = ns.db.recipes[recipeID]
@@ -192,6 +260,16 @@ local TABS = {
     rows = function() return ns.realm and ns.realm.ledger.recent or {} end,
     empty = "No sales recorded yet. Sales are recorded when you collect auction gold from the mailbox.",
     tooltip = function(row, tt) tt:AddDoubleLine("Net after cut and deposit", ProfitText(row.net), 0.8, 0.8, 0.8, 1, 1, 1) end },
+  { id = "level", label = "Levelling", columns = LEVEL_COLUMNS, sort = nil, level = true,
+    rows = function() return UI.LevelRows() end,
+    empty = "Nothing to plan. Pick a character and profession above. Open that profession window once on the character so recipe colours are known, and scan the auction house for material prices.",
+    footer = function() return state.levelPlan and ns.Levelling.Summary(state.levelPlan, state.levelOption) or "No professions recorded yet. Open a profession window on each character." end,
+    tooltip = function(row, tt)
+      for _, line in ipairs(row.lines or {}) do tt:AddDoubleLine(line[1], line[2], 0.8, 0.8, 0.8, 1, 1, 1) end
+      if row.netTotal then tt:AddDoubleLine("Net for this step", NetText(row.netTotal), 0.8, 0.8, 0.8, 1, 1, 1) end
+      tt:AddLine(" ")
+      tt:AddLine(("Add puts %d craft%s of this in the Plan tab, which lists the materials to buy."):format(row.addCrafts or 1, (row.addCrafts or 1) == 1 and "" or "s"), 0.8, 0.8, 0.8, true)
+    end },
   { id = "plan", label = "Plan", columns = PLAN_COLUMNS, sort = nil,
     rows = function() return UI.PlanRows() end,
     empty = "Nothing planned. Press Add on a craft in the Crafting tab.",
@@ -231,6 +309,7 @@ local SETTINGS = {
   { key = "historySize", label = "Price history (points)", kind = "number", hint = "Price observations kept per item for the price chart and the market median. Each full scan or refresh adds one." },
   { key = "showTooltip", label = "Tooltip lines", kind = "toggle", hint = "Show GoldHound prices on item tooltips." },
   { key = "scanSound", label = "Scan complete sound", kind = "toggle", hint = "Play a sound when a full scan finishes, so you notice while tabbed out or AFK." },
+  { key = "levelVendorOnly", label = "Levelling: vendor value only", kind = "toggle", hint = "Value levelling products at what a vendor pays, even when they sell on the auction house. Off counts the market price (after the cut) for products with a known sale rate." },
 }
 
 local FILTERS = {
@@ -672,6 +751,74 @@ local function Build()
   frame.clearShop:SetText("Clear list")
   frame.clearShop:SetScript("OnClick", function() UI.ClearShopping() end)
 
+  -- Levelling tab controls: character and profession, target skill, view, add all.
+  local okDrop, drop = pcall(CreateFrame, "DropdownButton", nil, frame, "WowStyle1DropdownTemplate")
+  if okDrop and drop and drop.SetupMenu then
+    drop:SetPoint("TOPLEFT", 14, -68)
+    drop:SetWidth(250)
+    drop:SetDefaultText("Choose a profession")
+    drop:SetupMenu(function(_, root)
+      local function IsSelected(id) return LevelOption() and LevelOption().id == id end
+      local function SetSelected(id) UI.SelectLevelOption(id) end
+      for _, o in ipairs(ns.Levelling.Options()) do
+        root:CreateRadio(("%s - %s (%d/%d)"):format(o.charName, o.prof, o.skill, o.max), IsSelected, SetSelected, o.id)
+      end
+    end)
+    frame.levelDrop = drop
+  else
+    -- Older menu system: a button that steps through the options.
+    local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    b:SetSize(250, 22)
+    b:SetPoint("TOPLEFT", 14, -68)
+    b:SetScript("OnClick", function()
+      local options, current = ns.Levelling.Options(), LevelOption()
+      for i, o in ipairs(options) do
+        if current and o.id == current.id then UI.SelectLevelOption((options[i + 1] or options[1]).id) return end
+      end
+      if options[1] then UI.SelectLevelOption(options[1].id) end
+    end)
+    frame.levelDrop = b
+  end
+  frame.levelTargetLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  frame.levelTargetLabel:SetPoint("LEFT", frame.levelDrop, "RIGHT", 12, 0)
+  frame.levelTargetLabel:SetText("Target:")
+  frame.levelTarget = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+  frame.levelTarget:SetSize(48, 20)
+  frame.levelTarget:SetPoint("LEFT", frame.levelTargetLabel, "RIGHT", 10, 0)
+  frame.levelTarget:SetAutoFocus(false)
+  frame.levelTarget:SetNumeric(true)
+  frame.levelTarget:SetMaxLetters(4)
+  local function ApplyTarget(self)
+    local n = tonumber(self:GetText())
+    if n and n > 0 then state.level.target = math.floor(n) else state.level.target = nil end
+    self:ClearFocus()
+    UI.Refresh()
+  end
+  frame.levelTarget:SetScript("OnEnterPressed", ApplyTarget)
+  frame.levelTarget:SetScript("OnEditFocusLost", ApplyTarget)
+  frame.levelTarget:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  frame.levelModes = {}
+  for i, m in ipairs({ { id = "plan", label = "Plan" }, { id = "all", label = "All recipes" } }) do
+    local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    b:SetSize(m.id == "all" and 86 or 60, 20)
+    b:SetPoint("LEFT", i == 1 and frame.levelTarget or frame.levelModes.plan, "RIGHT", i == 1 and 12 or 4, 0)
+    b:SetText(m.label)
+    b:SetScript("OnClick", function() state.level.mode = m.id; state.offset = 0; state.sortIndex = nil; UI.Refresh() end)
+    frame.levelModes[m.id] = b
+  end
+  frame.levelAdd = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+  frame.levelAdd:SetSize(120, 20)
+  frame.levelAdd:SetPoint("LEFT", frame.levelModes.all, "RIGHT", 12, 0)
+  frame.levelAdd:SetText("Add all to Plan")
+  frame.levelAdd:SetScript("OnClick", function() UI.AddLevelPlan() end)
+  frame.levelAdd:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText("Add the whole plan")
+    GameTooltip:AddLine("Puts every step's crafts in the Plan tab, which merges the materials into one shopping list.", 0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+  end)
+  frame.levelAdd:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   frame.searchBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
   frame.searchBox:SetSize(180, 20)
   frame.searchBox:SetPoint("TOPRIGHT", -36, -70)
@@ -1014,6 +1161,15 @@ function UI.Refresh()
     frame.clearShop:ClearAllPoints()
     frame.clearShop:SetPoint("LEFT", frame.shopLabel, "RIGHT", 10, 0)
   end
+  local showLevel = tab.level == true
+  frame.levelDrop:SetShown(showLevel)
+  frame.levelTargetLabel:SetShown(showLevel)
+  frame.levelTarget:SetShown(showLevel)
+  frame.levelAdd:SetShown(showLevel)
+  for id, b in pairs(frame.levelModes) do
+    b:SetShown(showLevel)
+    if id == state.level.mode then b:LockHighlight() else b:UnlockHighlight() end
+  end
   local showSettings = tab.settings == true
   frame.settings:SetShown(showSettings)
   frame.list:SetShown(not showSettings)
@@ -1046,6 +1202,23 @@ function UI.Refresh()
   LayoutColumns(tab.columns)
   frame.empty:SetText(#filtered == 0 and tab.empty or "")
   UI.Render()
+  if showLevel then
+    if frame.levelDrop.GenerateMenu then
+      frame.levelDrop:GenerateMenu()
+    else
+      local o = state.levelOption
+      frame.levelDrop:SetText(o and ("%s - %s (%d/%d)"):format(o.charName, o.prof, o.skill, o.max) or "No professions recorded")
+    end
+    if not frame.levelTarget:HasFocus() then
+      frame.levelTarget:SetText(state.levelPlan and tostring(state.levelPlan.target) or "")
+    end
+    frame.levelAdd:SetEnabled(state.levelPlan ~= nil and #state.levelPlan.steps > 0)
+  end
+  if tab.footer then
+    frame.footer:SetText(tab.footer())
+    UI.UpdateScanButton()
+    return
+  end
   local net7, n7 = ns.Mail.NetForDays(7)
   local net30 = ns.Mail.NetForDays(30)
   local last = ns.realm and ns.realm.lastScan and date("%d %b %H:%M", ns.realm.lastScan) or "never"
