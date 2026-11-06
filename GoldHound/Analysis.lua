@@ -15,6 +15,7 @@ A.Labels = {
 }
 
 function A.Invalidate()
+  if ns.scan and ns.scan.wiped then return end -- keep the last rows until the scan completes
   cache = {}
   buyable = setmetatable({}, { __mode = "k" })
   ns.Fire("ANALYSIS_DIRTY")
@@ -27,6 +28,15 @@ end
 ns.On("ITEM_INFO", function() ns.Debounce("analysis-items", 4, A.Invalidate) end)
 
 local function S() return ns.settings end
+
+-- Rows cached under `name`. While a full scan is reading auctions the listings
+-- are half-built and unsorted; the previous rows (or none) are shown until the
+-- scan has stored its prices and SCAN_COMPLETE recomputes them.
+local NONE = {}
+local function Cached(name)
+  if cache[name] then return cache[name] end
+  if ns.scan and ns.scan.wiped then return NONE end
+end
 
 -- A suggestion must clear both the flat minimum profit and the minimum return
 -- on investment; either can be 0 to switch it off. Free things always pass ROI.
@@ -48,6 +58,7 @@ local function Finish(t)
     local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[t.key]
     if agg then t.t, t.refreshed = agg.t, agg.refreshed end
   end
+  if t.overBudget == nil and t.cost then t.overBudget = t.cost > ns.Budget() end
   t.lines = t.lines or {}
   return t
 end
@@ -66,13 +77,13 @@ end
 -- of units and buyouts. Built once per item per analysis, so counting the
 -- listings in a price range is two binary searches instead of a full pass for
 -- every candidate listing.
-local function Buyable(agg, me)
+local function Buyable(agg)
   local b = buyable[agg]
   if b then return b end
   b = { units = { [0] = 0 }, gold = { [0] = 0 }, unit = {} }
   local n = 0
   for _, l in ipairs(agg.listings) do
-    if l.buyout > 0 and l.owner ~= me then
+    if l.buyout > 0 and not Pricing.IsMine(l.owner) then
       n = n + 1
       b.unit[n] = l.unit
       b.units[n] = b.units[n - 1] + l.count
@@ -98,8 +109,8 @@ end
 
 -- Buyable listings priced strictly between two unit prices: units, listings,
 -- the lowest unit price among them and their combined buyout.
-local function CompetitionLines(agg, fromUnit, toUnit, me)
-  local b = Buyable(agg, me)
+local function CompetitionLines(agg, fromUnit, toUnit)
+  local b = Buyable(agg)
   local first = FirstAbove(b, fromUnit, false)
   local last = FirstAbove(b, toUnit, true) - 1
   if last < first then return 0, 0, nil, 0 end
@@ -107,18 +118,19 @@ local function CompetitionLines(agg, fromUnit, toUnit, me)
 end
 
 function A.Flips()
-  if cache.flips then return cache.flips end
+  local cached = Cached("flips")
+  if cached then return cached end
   Pricing = ns.Pricing
-  local rows, s, me = {}, S(), ns.charName
+  local rows, s = {}, S()
   local budget = ns.Budget()
   for key, agg in pairs(ns.scan.byKey or {}) do
-    if ns.IsCommodity(agg.itemID) then
+    if ns.IsCommodityKey(key) then
       local market, source = Pricing.GetMarket(key)
       if market and market > 0 and Pricing.HasEvidence(key) then
         local threshold = market * (1 - s.flipDiscount)
         local cost, qty, n = 0, 0, 0
         for _, l in ipairs(agg.listings) do
-          if l.buyout > 0 and l.owner ~= me then
+          if l.buyout > 0 and not Pricing.IsMine(l.owner) then
             if l.unit <= threshold then
               cost, qty, n = cost + l.buyout, qty + l.count, n + 1
             else
@@ -132,7 +144,7 @@ function A.Flips()
           if A.Passes(profit, cost) then
             local first = agg.listings[1]
             local itemID = agg.itemID
-            local compUnits, compListings, compLow, compGold = CompetitionLines(agg, threshold, market, me)
+            local compUnits, compListings, compLow, compGold = CompetitionLines(agg, threshold, market)
             local clearCost = cost + compGold
             local lines = {
               { "Market value (" .. source .. ")", ns.Money(market) .. " each" },
@@ -162,13 +174,13 @@ function A.Flips()
       end
     else
       for _, l in ipairs(agg.listings) do
-        if l.buyout > 0 and l.owner ~= me then
+        if l.buyout > 0 and not Pricing.IsMine(l.owner) then
           local market, source = Pricing.GetMarket(key, l)
           if market and market > 0 and Pricing.HasEvidence(key, l) then
             local resale = market * l.count * (1 - s.ahCut)
             local profit = resale - l.buyout
             if l.unit <= market * (1 - s.flipDiscount) and A.Passes(profit, l.buyout) then
-              local compUnits, compListings = CompetitionLines(agg, l.unit, market, me)
+              local compUnits, compListings = CompetitionLines(agg, l.unit, market)
               local t = Finish({
                 cat = "flip", key = key, itemID = l.itemID, link = l.link, name = l.name, icon = l.icon,
                 qty = l.count, cost = l.buyout, revenue = resale, profit = profit, market = market, listing = l,
@@ -198,19 +210,20 @@ end
 -- not only the deeply discounted ones, so the relist actually holds.
 -------------------------------------------------------------------------------
 function A.Resets()
-  if cache.resets then return cache.resets end
+  local cached = Cached("resets")
+  if cached then return cached end
   Pricing = ns.Pricing
-  local rows, s, me = {}, S(), ns.charName
+  local rows, s = {}, S()
   local budget = ns.Budget()
   for key, agg in pairs(ns.scan.byKey or {}) do
-    if ns.IsCommodity(agg.itemID) then
+    if ns.IsCommodityKey(key) then
       local median, scans = Pricing.HistoryMedian(key, 3)
       if median and median > 0 then
         local relist = median
         local cost, qty, n, cheapCost, cheapQty = 0, 0, 0, 0, 0
         local threshold = median * (1 - s.resetDiscount)
         for _, l in ipairs(agg.listings) do
-          if l.buyout > 0 and l.owner ~= me then
+          if l.buyout > 0 and not Pricing.IsMine(l.owner) then
             if l.unit < relist then
               cost, qty, n = cost + l.buyout, qty + l.count, n + 1
               if l.unit <= threshold then cheapCost, cheapQty = cheapCost + l.buyout, cheapQty + l.count end
@@ -237,7 +250,7 @@ function A.Resets()
                 ns.Buy.Commodity(itemID, qty, maxUnit, first.name, { expectedUnit = avg, baseProfit = profit, profitAt = function(_, total) return revenue - total end })
               end },
               lines = {
-                { ("Price history median (%d scans)"):format(scans), ns.Money(median) .. " each" },
+                { ("Price history median (last %d scans)"):format(math.min(scans, 10)), ns.Money(median) .. " each" },
                 { ("Buy all %d listings under"):format(n), ns.Money(relist) .. " each" },
                 { "Of which deeply discounted", ("%d units for %s"):format(cheapQty, ns.Money(cheapCost)) },
                 { "Average buy price", ns.Money(avg) .. " each" },
@@ -260,12 +273,18 @@ end
 -- Snipes: auctions ending soon where the required bid is far below market.
 -------------------------------------------------------------------------------
 function A.Snipes()
-  if cache.snipes then return cache.snipes end
+  local cached = Cached("snipes")
+  -- Short auctions end within minutes, so these rows expire on their own.
+  if cached and (cached == NONE or ns.scan.wiped or time() - (cache.snipesAt or 0) < 60) then return cached end
   Pricing = ns.Pricing
-  local rows, s, me = {}, S(), ns.charName
+  local rows, s = {}, S()
+  -- A "Short" auction has under this long left when seen; from older data it
+  -- has already ended.
+  local shortLife, now = ns.BandMinSeconds(1), time()
   for key, agg in pairs(ns.scan.byKey or {}) do
-    for _, l in ipairs(agg.listings) do
-      if l.timeLeft == 0 and l.owner ~= me and (l.minBid or 0) > 0 then
+    local fresh = agg.t and now - agg.t < shortLife
+    for _, l in ipairs(fresh and agg.listings or NONE) do
+      if l.timeLeft == 0 and not Pricing.IsMine(l.owner) and (l.minBid or 0) > 0 then
         local required = (l.bidAmount > 0) and (l.bidAmount + math.max(l.minIncrement, 1)) or l.minBid
         local market, source = Pricing.GetMarket(key, l)
         if market and market > 0 and Pricing.HasEvidence(key, l) then
@@ -291,7 +310,7 @@ function A.Snipes()
     end
   end
   table.sort(rows, function(a, b) return a.profit > b.profit end)
-  cache.snipes = rows
+  cache.snipes, cache.snipesAt = rows, now
   return rows
 end
 
@@ -299,9 +318,10 @@ end
 -- Arbitrage: listings worth more to a vendor or as disenchant materials.
 -------------------------------------------------------------------------------
 function A.Arbitrage()
-  if cache.arbitrage then return cache.arbitrage end
+  local cached = Cached("arbitrage")
+  if cached then return cached end
   Pricing, Chars = ns.Pricing, ns.Chars
-  local rows, s, me = {}, S(), ns.charName
+  local rows, s = {}, S()
   local enchanters = Chars.WithProfession("Enchanting")
   local deCache, deWho = {}, {}
   local function DE(itemID)
@@ -317,7 +337,7 @@ function A.Arbitrage()
     local info = ns.ItemInfo(agg.itemID)
     if info then
       for _, l in ipairs(agg.listings) do
-        if l.buyout > 0 and l.owner ~= me then
+        if l.buyout > 0 and not Pricing.IsMine(l.owner) then
           if info.sellPrice > 0 then
             local profit = info.sellPrice * l.count - l.buyout
             if A.Passes(profit, l.buyout) then
@@ -400,9 +420,10 @@ local function ProfitForRecipeItem(parsed, s)
 end
 
 function A.Recipes()
-  if cache.recipes then return cache.recipes end
+  local cached = Cached("recipes")
+  if cached then return cached end
   Pricing, Chars = ns.Pricing, ns.Chars
-  local rows, s, me = {}, S(), ns.charName
+  local rows, s = {}, S()
   local best, known = {}, {}
   for _, r in pairs(ns.db.recipes or {}) do
     if r.prof and r.name then known[r.prof .. "\0" .. r.name] = true end
@@ -411,7 +432,7 @@ function A.Recipes()
     local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(agg.itemID)
     if classID == ns.Data.CLASS_RECIPE then
       for _, l in ipairs(agg.listings) do
-        if l.buyout > 0 and l.owner ~= me and (not best[agg.itemID] or l.unit < best[agg.itemID].unit) then
+        if l.buyout > 0 and not Pricing.IsMine(l.owner) and (not best[agg.itemID] or l.unit < best[agg.itemID].unit) then
           best[agg.itemID] = l
         end
       end
@@ -453,7 +474,8 @@ end
 -- Vendor buys: limited-stock vendor items and vendor recipes that resell on the AH.
 -------------------------------------------------------------------------------
 function A.VendorFlips()
-  if cache.vendorflips then return cache.vendorflips end
+  local cached = Cached("vendorflips")
+  if cached then return cached end
   Pricing = ns.Pricing
   local rows, s = {}, S()
   for itemID, price in pairs(ns.db.vendorBuy or {}) do
@@ -496,7 +518,8 @@ local function SourceText(part)
 end
 
 function A.Crafts()
-  if cache.crafts then return cache.crafts end
+  local cached = Cached("crafts")
+  if cached then return cached end
   Pricing, Chars = ns.Pricing, ns.Chars
   local rows, s = {}, S()
   for recipeID, r in pairs(ns.db.recipes or {}) do
@@ -575,7 +598,8 @@ end
 -- Restock: things you have sold before that are now scarce on the AH.
 -------------------------------------------------------------------------------
 function A.Restock()
-  if cache.restock then return cache.restock end
+  local cached = Cached("restock")
+  if cached then return cached end
   Pricing = ns.Pricing
   local rows, s = {}, S()
   for itemID, l in pairs(ns.realm.ledger.items or {}) do

@@ -74,24 +74,27 @@ local function Refresh()
   panel.cheapest:SetText("Cheapest listed now: " .. (cheapest and (ns.Money(cheapest) .. " each") or "|cff9d9d9dnone|r"))
   panel.rate:SetText("Sale rate: " .. ns.Pricing.RateText(rate) .. (rate and (" (" .. ("%.1f"):format(ns.Pricing.DaysToSell(rate, c.count) or 0) .. " days for " .. c.count .. ")") or ""))
   panel.deposit:SetText("Deposit " .. Durations(c.itemID, c.location, c.count, c.commodity))
+  -- The auction house price inputs take whole silver, so the suggestion is
+  -- rounded down to it: an undercut of 1 copper would otherwise be lost.
+  local function Silver(v) return math.floor(v / 100) * 100 end
   local suggested
   if cheapest and market then
-    suggested = math.min(cheapest - 1, market)
+    suggested = Silver(math.min(cheapest - 1, market))
     if cheapest < market * (1 - ns.settings.flipDiscount) then
       panel.warning:SetText(("The current cheapest listing is %d%% under the market value. Consider waiting or buying it out."):format((1 - cheapest / market) * 100))
     else
       panel.warning:SetText("")
     end
   elseif cheapest then
-    suggested = cheapest - 1
+    suggested = Silver(cheapest - 1)
     panel.warning:SetText("")
   elseif market then
-    suggested = market
+    suggested = Silver(market)
     panel.warning:SetText("Nothing else is listed; price from market history.")
   else
     panel.warning:SetText("No price data yet. Run a full scan.")
   end
-  if suggested and suggested < 1 then suggested = 1 end
+  if suggested and suggested < 100 then suggested = 100 end
   c.suggested = suggested
   panel.suggest:SetText(suggested and ("Suggested: |cff33ff33" .. ns.Money(suggested) .. "|r each, net " .. ns.Money(suggested * c.count * (1 - ns.settings.ahCut)) .. " for the stack") or "")
   panel.use:SetEnabled(suggested ~= nil)

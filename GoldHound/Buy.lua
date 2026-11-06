@@ -205,6 +205,7 @@ local function OnCommodityResults(s, itemID)
     return
   end
   local short = qty < s.quantity
+  local wanted = s.quantity
   s.quoted = true
   s.quantity = qty
   s.expectedTotal = total
@@ -212,7 +213,7 @@ local function OnCommodityResults(s, itemID)
   if s.timer then s.timer:Cancel() end
   Status("Waiting for confirmation...")
   Confirm(("%d x %s available for about %s (%s each).%s Request the purchase?"):format(qty, s.name, ns.Money(total), ns.Money(expectedUnit),
-      short and (" |cffff8844Only %d of the %d units expected are still near the scanned price.|r"):format(qty, s.quantity) or ""),
+      short and (" |cffff8844Only %d of the %d units expected are still near the scanned price.|r"):format(qty, wanted) or ""),
     function()
       if active ~= s then return end
       -- Forever's client passes the expected unit price as a third argument.

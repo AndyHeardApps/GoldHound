@@ -42,6 +42,7 @@ end
 
 function Worth.Sample()
   if not ns.realm or not ns.Pricing then return end
+  if ns.scan and ns.scan.wiped then return end -- listings are half-read during a scan
   local ok, gold, inventory, auctions = pcall(Worth.Compute)
   if not ok then ns.Debug("worth sample failed", gold); return end
   local list = ns.realm.worth

@@ -27,7 +27,10 @@ local function Capture(verbose)
 
   local okp, prof = pcall(C_TradeSkillUI.GetChildProfessionInfo)
   if not okp or type(prof) ~= "table" then Say(verbose, "GetChildProfessionInfo failed: %s", tostring(prof)); return end
-  local profName = prof.professionName
+  -- On tiered professions the child name is the expansion tier ("Khaz Algar
+  -- Alchemy"); characters record the parent name ("Alchemy").
+  local profName = prof.parentProfessionName
+  if not profName or profName == "" then profName = prof.professionName end
   if not profName or profName == "" then
     local okb, base = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
     if okb and type(base) == "table" then profName = base.professionName end

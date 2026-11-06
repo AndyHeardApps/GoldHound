@@ -9,8 +9,10 @@ local BACKPACK = BagIndex.Backpack or 0
 local LAST_BAG = BagIndex.ReagentBag or 5
 local BANK = BagIndex.Bank or -1
 local REAGENT_BANK = BagIndex.Reagentbank or -3
-local FIRST_BANK_BAG = BagIndex.BankBag_1 or 6
-local LAST_BANK_BAG = BagIndex.BankBag_7 or 12
+-- The newer bank has character tabs instead of bank bags, and the Warband
+-- bank tabs follow them; those are shared, so they are not counted per character.
+local FIRST_BANK_BAG = BagIndex.CharacterBankTab_1 or BagIndex.BankBag_1 or 6
+local LAST_BANK_BAG = BagIndex.CharacterBankTab_6 or BagIndex.BankBag_7 or 12
 
 local function CountBag(bagID, into)
   local okn, slots = pcall(C_Container.GetContainerNumSlots, bagID)

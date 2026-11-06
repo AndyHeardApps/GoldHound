@@ -270,17 +270,25 @@ local function DoBuyVendor(step)
     if okl and ns.ItemIDFromLink(link) == step.itemID then
       local info = C_MerchantFrame.GetItemInfo(i)
       local bundle = (info and info.stackCount and info.stackCount > 0) and info.stackCount or 1
-      local wanted = math.ceil(step.qty / bundle)
+      -- BuyMerchantItem takes a number of items (a multiple of the bundle
+      -- size for items sold in bundles), as Blizzard's stack-split purchase does.
+      local bundles = math.ceil(step.qty / bundle)
+      local cost = (info and info.price or 0) * bundles
+      if cost > ns.Budget() then
+        ns.Print("Not enough gold: %d x %s costs %s and you have %s.", bundles * bundle, step.name, ns.Money(cost), ns.Money(ns.Budget()))
+        return
+      end
       local okm, maxStack = pcall(GetMerchantItemMaxStack, i)
       maxStack = (okm and type(maxStack) == "number" and maxStack > 0) and maxStack or 20
-      local bought = 0
-      while wanted > 0 and bought < 50 do
-        local batch = math.min(wanted, maxStack)
+      local perPurchase = math.max(bundle, math.floor(maxStack / bundle) * bundle)
+      local wanted, purchases = bundles * bundle, 0
+      while wanted > 0 and purchases < 50 do
+        local batch = math.min(wanted, perPurchase)
         BuyMerchantItem(i, batch)
         wanted = wanted - batch
-        bought = bought + 1
+        purchases = purchases + 1
       end
-      ns.Print("Bought %d x %s from the vendor.", step.qty, step.name)
+      ns.Print("Buying %d x %s from the vendor for %s.", bundles * bundle - wanted, step.name, ns.Money(cost))
       return
     end
   end

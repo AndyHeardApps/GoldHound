@@ -252,6 +252,13 @@ function ns.KeyFor(itemID, suffix)
   return itemID .. "|" .. math.abs(tonumber(suffix) or 0)
 end
 
+-- True when a price key belongs to a commodity. Keys are made while the item
+-- data is loaded (during a scan or refresh), so their shape is reliable even
+-- when IsCommodity cannot answer yet, as at login before item data arrives.
+function ns.IsCommodityKey(key)
+  return not tostring(key):find("|", 1, true)
+end
+
 function ns.ItemIDFromKey(key)
   return tonumber(tostring(key):match("^(%d+)"))
 end

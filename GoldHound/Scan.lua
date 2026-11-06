@@ -311,6 +311,7 @@ local function StorePrices(done)
       if a.buyout > 0 and b.buyout > 0 then return a.unit < b.unit end
       return a.buyout > 0 and b.buyout == 0
     end)
+    agg.ref = nil -- a floor cached before sorting or the unit fix is wrong
     if agg.n > 0 then
       local s = ns.Pricing.ListingStats(agg.listings)
       local e = prices[key] or {}

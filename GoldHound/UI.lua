@@ -48,7 +48,7 @@ local OPP_COLUMNS = {
   { label = "Item", width = 246, item = true, text = function(r) return r.link or r.name or "?" end, value = function(r) return r.name or "" end },
   { label = "Who", width = 72, text = function(r) return r.who or "" end, value = function(r) return r.who or "" end },
   { label = "Qty", width = 36, align = "RIGHT", text = function(r) return Qty(r.qty) end, value = function(r) return r.qty or 0 end },
-  { label = "Cost", width = 90, align = "RIGHT", text = function(r) if r.overBudget then return RED .. ns.Money(r.cost) .. R end return Money(r.cost) end, value = function(r) return r.cost or 0 end },
+  { label = "Cost", width = 90, align = "RIGHT", text = function(r) if r.cost and r.cost > ns.Budget() then return RED .. ns.Money(r.cost) .. R end return Money(r.cost) end, value = function(r) return r.cost or 0 end },
   { label = "Profit", width = 90, align = "RIGHT", text = function(r) return ProfitText(r.profit) end, value = function(r) return r.profit or 0 end },
   { label = "ROI", width = 44, align = "RIGHT", text = function(r) return Pct(r.roi) end, value = function(r) return r.roi or 0 end },
   { label = "Sales/day", width = 66, align = "RIGHT", text = function(r) return r.rateSource == "vendor" and "instant" or ns.Pricing.RateText(r.rate) end, value = function(r) return r.rate or -1 end },
@@ -1459,6 +1459,8 @@ ns.On("PLAN_CHANGED", function() if state.tab == "plan" then ns.Debounce("ui-ref
 ns.On("LISTING_BOUGHT", function() if state.tab == "plan" then ns.Debounce("ui-refresh", 1.0, function() UI.Refresh() end) end end)
 ns.On("AH_OPEN", function() if frame then UI.Refresh() end end)
 ns.On("AH_CLOSED", function() if frame then UI.Refresh() end end)
+-- Secure buttons cannot be moved or hidden in combat; place them once it ends.
+ns.RegisterEvent("PLAYER_REGEN_ENABLED", function() if frame and frame:IsShown() then UI.Render() end end)
 
 -- A small button on the Blizzard auction house frame, in the tab row below it
 -- so it never overlaps the search bar.

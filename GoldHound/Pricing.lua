@@ -84,8 +84,17 @@ end
 -- The current floor for an item from the latest scan or refresh, cached per
 -- scan when no listing is excluded. Returns the floor and the number of
 -- listings behind it, which decides whether the value is trustworthy.
+-- The current listings for a key, or nil. While a full scan is reading
+-- auctions the listings are half-built and unsorted, so nothing is priced from
+-- them until the scan has stored its prices.
+function Pricing.Listings(key)
+  local scan = ns.scan
+  if not scan or scan.wiped or not scan.byKey then return nil end
+  return scan.byKey[key]
+end
+
 function Pricing.ScanReference(key, exclude)
-  local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[key]
+  local agg = Pricing.Listings(key)
   if not agg then return nil, 0 end
   if agg.ref == nil then
     local total, n = 0, 0
@@ -105,6 +114,24 @@ function Pricing.ScanReference(key, exclude)
   return agg.ref, agg.refN or agg.n
 end
 
+-- True when a listing's owner is one of your characters on this realm, so it
+-- is not something you can buy. Owner names may carry a "-Realm" suffix on
+-- connected realms. The set is rebuilt when character records change.
+local ownNames = nil
+ns.On("CHARS_UPDATED", function() ownNames = nil end)
+
+function Pricing.IsMine(owner)
+  if not owner then return false end
+  if not ownNames then
+    ownNames = {}
+    if ns.charName then ownNames[ns.charName] = true end
+    for _, rec in pairs(ns.db and ns.db.chars or {}) do
+      if rec.realm == ns.realmName and rec.name then ownNames[rec.name] = true end
+    end
+  end
+  return ownNames[owner] or ownNames[owner:match("^[^-]+") or owner] or false
+end
+
 -- What it costs right now to buy `qty` units (default 1), from the cheapest
 -- current listings upwards. Returns the average unit price over those units,
 -- the dearest unit price among them, how many units were available and a
@@ -113,12 +140,11 @@ end
 -- skipped since you cannot buy them.
 function Pricing.AcquireCost(key, qty)
   qty = qty or 1
-  local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[key]
-  local me = ns.charName
+  local agg = Pricing.Listings(key)
   if agg then
     local need, cost, dearest = qty, 0, nil
     for _, l in ipairs(agg.listings) do -- sorted by unit price ascending
-      if l.buyout > 0 and l.owner ~= me then
+      if l.buyout > 0 and not Pricing.IsMine(l.owner) then
         local take = math.min(l.count, need)
         cost = cost + take * l.unit
         dearest = l.unit

@@ -10,10 +10,13 @@ local function Record(index)
   if not ns.realm then return end
   local ok, invoiceType, itemName, playerName, bid, buyout, deposit, consignment, _, _, _, count = pcall(GetInboxInvoiceInfo, index)
   if not ok or invoiceType ~= "seller" or not itemName then return end
-  local okh, _, _, sender, subject, money = pcall(GetInboxHeaderInfo, index)
-  local signature = ("%s|%s|%s|%s"):format(itemName, tostring(bid), tostring(playerName), tostring(okh and money or 0))
-  if collected[signature] then return end
-  collected[signature] = GetTime()
+  -- Both hooks can fire for the same mail in one action. Only that is a
+  -- duplicate: separate sales of the same item at the same price, even to the
+  -- same buyer, are separate mails taken in separate frames.
+  local signature = ("%s|%s|%s|%d"):format(itemName, tostring(bid), tostring(playerName), index)
+  local now = GetTime()
+  if collected[signature] == now then return end
+  collected[signature] = now
   local price = (bid and bid > 0) and bid or (buyout or 0)
   if price <= 0 then return end
   local units = count or 1

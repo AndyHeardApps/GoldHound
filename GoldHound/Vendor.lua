@@ -26,13 +26,19 @@ local function Capture()
         local per = info.price / math.max(1, info.stackCount or 1)
         local limited = info.numAvailable ~= nil and info.numAvailable >= 0
         local old = ns.db.vendorBuy[itemID]
-        if not old or per < old then
-          ns.db.vendorBuy[itemID] = per
-          changed = changed + 1
-        end
         local meta = ns.db.vendorInfo[itemID] or {}
-        meta.where = where
-        meta.limited = limited
+        -- The recorded price and the vendor behind it stay together. A vendor
+        -- with unlimited stock beats a limited one, a cheaper offer of the same
+        -- kind beats a dearer one, and revisiting the recorded vendor updates it.
+        local replace = not old or meta.where == where
+          or (meta.limited and not limited)
+          or (limited == (meta.limited or false) and per < old)
+        if replace then
+          if per ~= old or meta.limited ~= limited then changed = changed + 1 end
+          ns.db.vendorBuy[itemID] = per
+          meta.where = where
+          meta.limited = limited
+        end
         meta.t = time()
         local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemID)
         meta.classID = classID
