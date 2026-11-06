@@ -16,15 +16,30 @@ function Pricing.GetEntry(key)
 end
 
 -- Median of the floor price seen in the most recent scans: the "typical" price.
+-- The median is cached per history list and window size. Recording a point
+-- appends a new table, so a changed newest point means the cache is stale.
+local medianCache = setmetatable({}, { __mode = "k" })
+
 function Pricing.HistoryMedian(key, minScans, maxScans)
   local e = Pricing.GetEntry(key)
   if not e or not e.h then return nil, 0 end
-  local n = #e.h
+  local h = e.h
+  local n = #h
   if n < (minScans or 1) then return nil, n end
-  local values = {}
-  local first = math.max(1, n - (maxScans or 10) + 1)
-  for i = first, n do table.insert(values, e.h[i].f or e.h[i].m) end
-  return Median(values), n
+  local size = maxScans or 10
+  local c = medianCache[h]
+  if not c or c.n ~= n or c.last ~= h[n] then
+    c = { n = n, last = h[n] }
+    medianCache[h] = c
+  end
+  local median = c[size]
+  if median == nil then
+    local values = {}
+    for i = math.max(1, n - size + 1), n do values[#values + 1] = h[i].f or h[i].m end
+    median = Median(values)
+    c[size] = median
+  end
+  return median, n
 end
 
 -- What the item typically sells for: the median floor over recent scans.
@@ -39,12 +54,20 @@ end
 -- when the market is small, so a single listing still sets the floor for a
 -- thinly traded item. `exclude` is a listing to leave out, the one you are
 -- thinking of buying. Returns the floor and the number of listings behind it.
-function Pricing.FloorWithDepth(listings, exclude)
-  local total, n = 0, 0
-  for _, l in ipairs(listings) do
-    if l.buyout > 0 and l ~= exclude then total = total + l.count; n = n + 1 end
+--
+-- `total` and `n` are the units and listings with a buyout, `exclude` included,
+-- when the caller already knows them; that skips a full pass over the listings,
+-- which matters when this runs once per listing of an item with thousands.
+function Pricing.FloorWithDepth(listings, exclude, total, n)
+  if total then
+    if exclude and exclude.buyout > 0 then total, n = total - exclude.count, n - 1 end
+  else
+    total, n = 0, 0
+    for _, l in ipairs(listings) do
+      if l.buyout > 0 and l ~= exclude then total = total + l.count; n = n + 1 end
+    end
   end
-  if n == 0 then return nil, 0 end
+  if n <= 0 then return nil, 0 end
   local s = ns.settings or {}
   local need = math.min(s.floorDepth or 3, math.max(1, total * (s.floorShare or 0.05)))
   local run, last = 0, nil
@@ -64,10 +87,19 @@ end
 function Pricing.ScanReference(key, exclude)
   local agg = ns.scan and ns.scan.byKey and ns.scan.byKey[key]
   if not agg then return nil, 0 end
-  if exclude then return Pricing.FloorWithDepth(agg.listings, exclude) end
   if agg.ref == nil then
-    local f, n = Pricing.FloorWithDepth(agg.listings)
-    agg.ref, agg.refN = f or false, n
+    local total, n = 0, 0
+    for _, l in ipairs(agg.listings) do
+      if l.buyout > 0 then total = total + l.count; n = n + 1 end
+    end
+    local f = Pricing.FloorWithDepth(agg.listings, nil, total, n)
+    agg.ref, agg.refN, agg.refQ = f or false, n, total
+  end
+  if exclude then
+    -- A listing from an older copy of these listings is not in the list, so
+    -- it must not be subtracted from the totals.
+    if exclude.key ~= key then exclude = nil end
+    return Pricing.FloorWithDepth(agg.listings, exclude, agg.refQ, agg.refN)
   end
   if agg.ref == false then return nil, 0 end
   return agg.ref, agg.refN or agg.n

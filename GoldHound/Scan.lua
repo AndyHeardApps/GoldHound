@@ -594,6 +594,7 @@ ns.On("LISTING_BOUGHT", function(listing, quantity)
       break
     end
   end
+  agg.ref = nil -- the cached floor and totals no longer match the listings
   Scan.SaveKey(listing.key)
   ns.Analysis.Invalidate()
 end)

@@ -958,7 +958,7 @@ function UI.ApplySetting(def, box)
   end
   if ns.settings[def.key] ~= value then
     ns.settings[def.key] = value
-    if def.key == "floorDepth" then -- the per-scan floor cache depends on it
+    if def.key == "floorDepth" or def.key == "floorShare" then -- the per-scan floor cache depends on them
       for _, agg in pairs(ns.scan.byKey or {}) do agg.ref = nil end
     end
     ns.Analysis.Invalidate()

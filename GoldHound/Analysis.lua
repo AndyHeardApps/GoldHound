@@ -7,6 +7,7 @@ ns.Analysis = A
 
 local Pricing, Chars = nil, nil
 local cache = {}
+local buyable = setmetatable({}, { __mode = "k" }) -- see Buyable below
 
 A.Labels = {
   flip = "Flip", reset = "Reset", snipe = "Snipe", vendor = "Vendor sell", disenchant = "Disenchant",
@@ -15,6 +16,7 @@ A.Labels = {
 
 function A.Invalidate()
   cache = {}
+  buyable = setmetatable({}, { __mode = "k" })
   ns.Fire("ANALYSIS_DIRTY")
 end
 
@@ -60,16 +62,48 @@ end
 -- discount threshold must be bought, or the rest keeps the price down. For
 -- equipment each listing is separate, but competing listings are reported.
 -------------------------------------------------------------------------------
-local function CompetitionLines(agg, fromUnit, toUnit, me)
-  local units, listings, lowest = 0, 0, nil
+-- The listings of an item you could buy, cheapest first, with running totals
+-- of units and buyouts. Built once per item per analysis, so counting the
+-- listings in a price range is two binary searches instead of a full pass for
+-- every candidate listing.
+local function Buyable(agg, me)
+  local b = buyable[agg]
+  if b then return b end
+  b = { units = { [0] = 0 }, gold = { [0] = 0 }, unit = {} }
+  local n = 0
   for _, l in ipairs(agg.listings) do
-    if l.buyout > 0 and l.owner ~= me and l.unit > fromUnit and l.unit < toUnit then
-      units = units + l.count
-      listings = listings + 1
-      lowest = lowest or l.unit
+    if l.buyout > 0 and l.owner ~= me then
+      n = n + 1
+      b.unit[n] = l.unit
+      b.units[n] = b.units[n - 1] + l.count
+      b.gold[n] = b.gold[n - 1] + l.buyout
     end
   end
-  return units, listings, lowest
+  b.n = n
+  buyable[agg] = b
+  return b
+end
+
+-- Index of the first buyable listing whose unit price is above `price`
+-- (or at least `price` when `inclusive`), or n + 1 when there is none.
+local function FirstAbove(b, price, inclusive)
+  local lo, hi = 1, b.n + 1
+  while lo < hi do
+    local mid = math.floor((lo + hi) / 2)
+    local u = b.unit[mid]
+    if u > price or (inclusive and u == price) then hi = mid else lo = mid + 1 end
+  end
+  return lo
+end
+
+-- Buyable listings priced strictly between two unit prices: units, listings,
+-- the lowest unit price among them and their combined buyout.
+local function CompetitionLines(agg, fromUnit, toUnit, me)
+  local b = Buyable(agg, me)
+  local first = FirstAbove(b, fromUnit, false)
+  local last = FirstAbove(b, toUnit, true) - 1
+  if last < first then return 0, 0, nil, 0 end
+  return b.units[last] - b.units[first - 1], last - first + 1, b.unit[first], b.gold[last] - b.gold[first - 1]
 end
 
 function A.Flips()
@@ -98,11 +132,8 @@ function A.Flips()
           if A.Passes(profit, cost) then
             local first = agg.listings[1]
             local itemID = agg.itemID
-            local compUnits, compListings, compLow = CompetitionLines(agg, threshold, market, me)
-            local clearCost = cost
-            for _, l in ipairs(agg.listings) do
-              if l.buyout > 0 and l.owner ~= me and l.unit > threshold and l.unit < market then clearCost = clearCost + l.buyout end
-            end
+            local compUnits, compListings, compLow, compGold = CompetitionLines(agg, threshold, market, me)
+            local clearCost = cost + compGold
             local lines = {
               { "Market value (" .. source .. ")", ns.Money(market) .. " each" },
               { ("Buy all %d listings under"):format(n), ns.Money(threshold) .. " each" },
@@ -272,7 +303,7 @@ function A.Arbitrage()
   Pricing, Chars = ns.Pricing, ns.Chars
   local rows, s, me = {}, S(), ns.charName
   local enchanters = Chars.WithProfession("Enchanting")
-  local deCache = {}
+  local deCache, deWho = {}, {}
   local function DE(itemID)
     local c = deCache[itemID]
     if c == nil then
@@ -304,7 +335,11 @@ function A.Arbitrage()
           end
           if #enchanters > 0 and info.quality >= 2 then
             local needed = ns.Data.DisenchantSkill(info.ilvl)
-            local who = Chars.CanDo("Enchanting", needed)
+            local who = deWho[needed]
+            if who == nil then
+              who = Chars.CanDo("Enchanting", needed) or false
+              deWho[needed] = who
+            end
             if who then
               local value, parts, missing = DE(agg.itemID)
               if value and value > 0 then
@@ -368,7 +403,10 @@ function A.Recipes()
   if cache.recipes then return cache.recipes end
   Pricing, Chars = ns.Pricing, ns.Chars
   local rows, s, me = {}, S(), ns.charName
-  local best = {}
+  local best, known = {}, {}
+  for _, r in pairs(ns.db.recipes or {}) do
+    if r.prof and r.name then known[r.prof .. "\0" .. r.name] = true end
+  end
   for key, agg in pairs(ns.scan.byKey or {}) do
     local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(agg.itemID)
     if classID == ns.Data.CLASS_RECIPE then
@@ -383,7 +421,7 @@ function A.Recipes()
     local parsed = ns.Recipes.Parse(itemID)
     if parsed and parsed.prof and parsed.product then
       local who = Chars.CanDo(parsed.prof, parsed.skill)
-      if who and not ns.Recipes.AlreadyKnown(parsed.prof, parsed.product) then
+      if who and not known[parsed.prof .. "\0" .. parsed.product] then
         local calc = ProfitForRecipeItem(parsed, s)
         if calc and A.Passes(calc.profit, calc.cost) then
           local payback = math.ceil(l.unit / calc.profit)
