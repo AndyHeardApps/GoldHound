@@ -20,11 +20,22 @@ ns.RegisterEvent("AUCTION_HOUSE_CLOSED", function()
   ns.Fire("AH_CLOSED")
 end)
 
+-- A scan that has made no progress for this long is treated as dead, so a
+-- lost event or an error can never block scanning for the rest of the session.
+local STUCK_AFTER = 300
+
 function Scan.CanStart(force)
   if not ns.realm then return false, "Not ready yet." end
   if not ns.ahOpen then return false, "Open the auction house first." end
-  if state.running then return false, "A scan is already running." end
+  if state.running and GetTime() - (state.progressAt or state.startedAt or 0) > STUCK_AFTER then
+    Scan.Abort(("The previous scan stopped responding while %s and was reset."):format(state.phase or "running"))
+  end
+  if state.running then return false, ("A scan is already running (%s)."):format(state.phase or "?") end
   if ns.Refresh and ns.Refresh.IsRunning() then return false, "Wait for the craft refresh to finish (or /gh refresh stop)." end
+  if ns.Buy and ns.Buy.IsBusy() then return false, "Wait for the purchase to finish." end
+  if not (C_AuctionHouse and C_AuctionHouse.ReplicateItems) then
+    return false, "This client has no C_AuctionHouse.ReplicateItems, so full scans are not possible."
+  end
   local last = ns.realm.lastScan or 0
   local wait = (last + (ns.settings.scanCooldown or 900)) - time()
   if wait > 0 and not force then
@@ -46,7 +57,91 @@ end
 
 function Scan.Status(text)
   state.status = text
+  state.progressAt = GetTime()
   ns.Fire("SCAN_STATUS", text)
+end
+
+-------------------------------------------------------------------------------
+-- Diagnostics. While the request is out, auction house and error events are
+-- recorded so a failure can say what actually happened instead of guessing.
+-------------------------------------------------------------------------------
+local REQUEST_TIMEOUT = 120
+local DIAG_EVENTS = {
+  "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT", "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED",
+  "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
+  "AUCTION_HOUSE_THROTTLED_SYSTEM_READY", "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_SHOW_NOTIFICATION",
+  "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", "AUCTION_HOUSE_DISABLED", "UI_ERROR_MESSAGE",
+  "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN",
+}
+local diagFrame = CreateFrame("Frame")
+
+local function Seen(name)
+  for _, e in ipairs(state.diag or {}) do
+    if e.event == name then return e end
+  end
+end
+
+
+local function WatchDiagnostics(on)
+  for _, e in ipairs(DIAG_EVENTS) do
+    if on then pcall(diagFrame.RegisterEvent, diagFrame, e) else pcall(diagFrame.UnregisterEvent, diagFrame, e) end
+  end
+end
+
+local function Ago(t)
+  if not t then return "never" end
+  local d = time() - t
+  if d < 60 then return ("%ds ago"):format(d) end
+  return ("%d min ago"):format(math.floor(d / 60))
+end
+
+-- Explains a request the server never answered, from the events seen meanwhile.
+local function NoReplyReason()
+  local blocked = Seen("ADDON_ACTION_BLOCKED") or Seen("ADDON_ACTION_FORBIDDEN")
+  if blocked then
+    return ("The game blocked GoldHound from calling %s. The scan request probably has to come from a click now: press the Scan button rather than relying on auto-scan or a macro."):format(blocked.args[2] or "the scan function")
+  end
+  local err = Seen("AUCTION_HOUSE_SHOW_ERROR")
+  if err then return ("The auction house reported error %s in reply to the scan request."):format(err.args[1] or "?") end
+  if Seen("AUCTION_HOUSE_DISABLED") then return "The auction house is disabled on this realm right now." end
+  local note = Seen("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION") or Seen("AUCTION_HOUSE_SHOW_NOTIFICATION")
+  if note then return ("The auction house answered with notification %s instead of auction data."):format(table.concat(note.args, " ")) end
+  if Seen("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED") then
+    return "The auction house dropped the scan request because it was busy with other requests. Wait a few seconds and scan again."
+  end
+  local ui = Seen("UI_ERROR_MESSAGE")
+  local uiText = ui and (" The game also showed the error: " .. (ui.args[2] or ui.args[1] or "?") .. ".") or ""
+  if Seen("AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED") and not Seen("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT") then
+    return "The scan request was queued but never sent; the auction house stayed busy." .. uiText
+  end
+  return ("No auction data arrived within %d seconds and the client reported no error.%s This is usually the server's full-scan limit: one full scan per about 15 minutes per account, shared with your other characters and with other addons that scan (Auctionator, TSM). GoldHound's last scan on this realm finished %s."):format(
+    REQUEST_TIMEOUT, uiText, Ago(ns.realm and ns.realm.lastScan))
+end
+
+diagFrame:SetScript("OnEvent", function(_, event, ...)
+  if not state.diag then return end
+  local args = {}
+  for i = 1, select("#", ...) do args[i] = tostring((select(i, ...))) end
+  -- Blocked actions name the addon first; only ours matter.
+  if (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and args[1] ~= ADDON then return end
+  if #state.diag < 30 then
+    table.insert(state.diag, { event = event, args = args, after = GetTime() - (state.startedAt or GetTime()) })
+  end
+  ns.Debug("scan diag", event, table.concat(args, ", "))
+  -- A blocked request will never be answered; say so now rather than at the timeout.
+  if (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and state.running and state.phase == "request" then
+    Scan.Abort(NoReplyReason())
+  end
+end)
+
+-- Runs fn and aborts the scan with a clear message if it throws, so an error
+-- in a later step can never leave the scan marked as running.
+local function Guard(step, fn)
+  return function(...)
+    if not state.running then return end
+    local ok, err = pcall(fn, ...)
+    if not ok then Scan.Abort(("Scan failed while %s: %s"):format(step, tostring(err))) end
+  end
 end
 
 function Scan.Start(force)
@@ -55,23 +150,39 @@ function Scan.Start(force)
   state.running = true
   state.phase = "request"
   state.startedAt = GetTime()
+  state.progressAt = GetTime()
   state.requestedAt = time()
+  state.diag = {}
+  state.busyAtStart = C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() or nil
+  WatchDiagnostics(true)
   pcall(frame.RegisterEvent, frame, "REPLICATE_ITEM_LIST_UPDATE")
   Scan.Status("Requesting auction data...")
   ns.Print("Starting full scan...")
-  C_AuctionHouse.ReplicateItems()
-  C_Timer.After(120, function()
-    if state.running and state.phase == "request" then
-      Scan.Abort("No reply from the server. The full-scan throttle is probably active; try again in a few minutes.")
+  local called, err = pcall(C_AuctionHouse.ReplicateItems)
+  if not called then
+    Scan.Abort("The game rejected the scan request: " .. tostring(err))
+    return false
+  end
+  local started = state.startedAt
+  C_Timer.After(REQUEST_TIMEOUT, function()
+    if state.running and state.phase == "request" and state.startedAt == started then
+      Scan.Abort(NoReplyReason())
     end
   end)
   return true
 end
 
+-- Ends a scan and keeps the reason, with the events seen, for /gh scan why.
 function Scan.Abort(reason)
+  local phase = state.phase
   state.running = false
   state.phase = nil
   frame:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
+  WatchDiagnostics(false)
+  if ns.realm then
+    ns.realm.lastScanError = { t = time(), reason = reason, phase = phase, busy = state.busyAtStart, events = state.diag }
+  end
+  state.diag = nil
   Scan.Status(reason)
   ns.Print(reason)
   if state.wiped then
@@ -89,14 +200,72 @@ end
 local AUTO_RETRY = 180
 local autoTicker
 
+local AUTO_TELL_AFTER = 30 -- seconds a wait lasts before the status line explains it
+local AUTO_BUSY_LIMIT = 60 -- after this long "busy", try anyway: the full scan may not queue behind it
+
+-- Why auto-scan is holding back right now, or nil when it can start. The
+-- cooldown is not reported; the Scan button already counts it down.
+local function AutoWaitReason()
+  if state.running then
+    if GetTime() - (state.progressAt or state.startedAt or 0) > STUCK_AFTER then return nil end -- Start resets it
+    return false
+  end
+  if ns.Refresh and ns.Refresh.IsRunning() then return "the craft refresh is still running (/gh refresh stop ends it)" end
+  if ns.Buy and ns.Buy.IsBusy() then return "a purchase is still in progress" end
+  if Scan.CooldownRemaining() > 0 then return false end
+  if state.autoFailedAt and GetTime() - state.autoFailedAt < AUTO_RETRY then
+    local err = ns.realm.lastScanError
+    return ("retrying in %ds after the last failure%s"):format(math.floor(AUTO_RETRY - (GetTime() - state.autoFailedAt)), err and (": " .. err.reason) or "")
+  end
+  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+    if state.autoWaiting == "busy" and GetTime() - state.autoWaitSince > AUTO_BUSY_LIMIT then return nil end
+    return "busy"
+  end
+  return nil
+end
+
 local function AutoTick()
-  if not (ns.settings and ns.settings.autoScan and ns.ahOpen and ns.realm) then return end
-  if state.running or (ns.Refresh and ns.Refresh.IsRunning()) or (ns.Buy and ns.Buy.IsBusy()) then return end
-  if Scan.CooldownRemaining() > 0 then return end
-  if state.autoFailedAt and GetTime() - state.autoFailedAt < AUTO_RETRY then return end
-  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+  if not (ns.settings and ns.settings.autoScan and ns.ahOpen and ns.realm) then state.autoWaiting = nil return end
+  local why = AutoWaitReason()
+  if why == false then state.autoWaiting = nil return end
+  if why then
+    if why ~= state.autoWaiting then state.autoWaiting, state.autoWaitSince, state.autoTold = why, GetTime(), nil end
+    if not state.autoTold and GetTime() - state.autoWaitSince >= AUTO_TELL_AFTER then
+      state.autoTold = true
+      Scan.Status("Auto-scan waiting: " .. (why == "busy" and "the auction house is busy answering other requests" or why))
+    end
+    return
+  end
+  state.autoWaiting = nil
   ns.Debug("auto-scan starting")
   Scan.Start(false)
+end
+
+-- Prints the last failed scan: when, the step it was on, the reason, and the
+-- auction house and error events seen while the request was out.
+function Scan.Explain()
+  local err = ns.realm and ns.realm.lastScanError
+  if state.running then
+    ns.Print("A scan is running (%s), last progress %ds ago.", state.phase or "?", math.floor(GetTime() - (state.progressAt or state.startedAt or GetTime())))
+  end
+  if state.autoWaiting then
+    ns.Print("Auto-scan is waiting: %s.", state.autoWaiting == "busy" and "the auction house is busy answering other requests" or state.autoWaiting)
+  end
+  if not err then
+    ns.Print("No failed scan recorded since the last successful one (last scan: %s).", ns.realm and ns.realm.lastScan and date("%d %b %H:%M", ns.realm.lastScan) or "never")
+    return
+  end
+  ns.Print("Last failed scan: %s, while %s.", date("%d %b %H:%M", err.t), err.phase or "starting")
+  ns.Print("  %s", err.reason or "?")
+  if err.busy then ns.Print("  The auction house was already busy with other requests when the scan was asked for.") end
+  if err.events and #err.events > 0 then
+    ns.Print("  Events while waiting for the server:")
+    for _, e in ipairs(err.events) do
+      ns.Print("    +%.1fs %s %s", e.after or 0, e.event, table.concat(e.args or {}, ", "))
+    end
+  elseif err.phase == "request" then
+    ns.Print("  No auction house or error events at all while waiting for the server.")
+  end
 end
 
 function Scan.AutoEnabled()
@@ -188,7 +357,7 @@ local function Batched(list, size, fn, status, done)
     end
     i = stop + 1
     Scan.Status(("%s (%d / %d)"):format(status, math.min(i - 1, n), n))
-    if i <= n then C_Timer.After(0, step) else done() end
+    if i <= n then C_Timer.After(0, step) else Guard("finishing " .. status:lower(), done)() end
   end
   step()
 end
@@ -493,7 +662,7 @@ end
 local function Finish()
   state.scanTime = time()
   state.phase = "finish"
-  Calibrate(function()
+  Calibrate(Guard("checking price units", function()
     StorePrices(function()
       InferSales(function()
         SaveSnapshot(function()
@@ -508,31 +677,33 @@ local function Finish()
             Scan.Status(("Scan done: %d auctions, %d items in %ds"):format(state.total, state.items or 0, seconds))
             ns.Print("Scan complete: %d auctions across %d items in %d seconds.", state.total, state.items or 0, seconds)
             if ns.settings.scanSound then pcall(PlaySound, SOUNDKIT and SOUNDKIT.ALARM_CLOCK_WARNING_2 or 12867, "Master") end
+            WatchDiagnostics(false)
+            state.diag = nil
+            if ns.realm then ns.realm.lastScanError = nil end
             ns.Fire("SCAN_COMPLETE")
           end)
         end)
       end)
     end)
-  end)
+  end))
 end
 
 local function Retry(attempt)
   if not state.running then return end
   if #state.pending == 0 or attempt > 5 then
     if #state.pending > 0 then ns.Debug("Skipped auctions without item data:", #state.pending) end
-    Finish()
+    Guard("finishing the scan", Finish)()
     return
   end
   Scan.Status(("Waiting for item data (%d left)..."):format(#state.pending))
-  C_Timer.After(1.0, function()
-    if not state.running then return end
+  C_Timer.After(1.0, Guard("waiting for item data", function()
     local still = {}
     for _, i in ipairs(state.pending) do
       if Ingest(i) == nil then table.insert(still, i) end
     end
     state.pending = still
     Retry(attempt + 1)
-  end)
+  end))
 end
 
 local function Process(n)
@@ -571,10 +742,14 @@ frame:SetScript("OnEvent", function(_, event)
   frame:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
   local n = C_AuctionHouse.GetNumReplicateItems() or 0
   if n == 0 then
-    Scan.Abort("The server returned no auctions. The full-scan throttle is probably active; try again later.")
+    Scan.Abort(("The server answered the scan request with an empty auction list after %ds. That is how it refuses a full scan inside its limit of about one per 15 minutes per account, shared with your other characters and other scanning addons. GoldHound's last scan on this realm finished %s."):format(
+      math.floor(GetTime() - (state.startedAt or GetTime())), Ago(ns.realm and ns.realm.lastScan)))
     return
   end
-  Process(n)
+  state.phase = "process"
+  WatchDiagnostics(false)
+  local ok, err = pcall(Process, n)
+  if not ok then Scan.Abort("Scan failed while reading auctions: " .. tostring(err)) end
 end)
 
 -- Removes a listing you just bought so it stops showing as an opportunity.

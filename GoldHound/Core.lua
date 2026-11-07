@@ -361,6 +361,7 @@ local function Help()
   ns.Print("Commands:")
   ns.Print("  /gh - toggle the window")
   ns.Print("  /gh scan [force] - full auction house scan (AH must be open)")
+  ns.Print("  /gh scan why - what went wrong with the last failed scan")
   ns.Print("  /gh auto [on|off] - auto-scan: rescan whenever the cooldown ends while the AH is open (now %s)", s.autoScan and "on" or "off")
   ns.Print("  /gh sound - toggle the sound played when a full scan completes (now %s)", s.scanSound and "on" or "off")
   ns.Print("  /gh refresh [force|stop] - re-price only the items your recipes make and use (no 15 minute wait)")
@@ -382,6 +383,8 @@ local function Status()
   ns.Print("%s: %d priced items, %d with sale data, last scan %s.", ns.realmKey, ns.Count(ns.realm.prices), ns.Count(ns.realm.sales), last)
   ns.Print("%d recipes known across %d characters, %d vendor prices seen, %d sales in the ledger.",
     ns.Count(ns.db.recipes), ns.Count(ns.db.chars), ns.Count(ns.db.vendorBuy), #(ns.realm.ledger.recent or {}))
+  local err = ns.realm.lastScanError
+  if err then ns.Print("Last scan failed %s: %s (/gh scan why for details)", date("%d %b %H:%M", err.t), err.reason or "?") end
   if ns.unavailableEvents and #ns.unavailableEvents > 0 then
     ns.Print("Events this client does not have: %s", table.concat(ns.unavailableEvents, ", "))
   end
@@ -411,7 +414,7 @@ SlashCmdList.GOLDHOUND = function(msg)
   elseif cmd == "help" then
     Help()
   elseif cmd == "scan" then
-    ns.Scan.Start(rest == "force")
+    if rest == "why" then ns.Scan.Explain() else ns.Scan.Start(rest == "force") end
   elseif cmd == "sound" then
     ns.settings.scanSound = not ns.settings.scanSound
     ns.Print("Scan complete sound %s.", ns.settings.scanSound and "on" or "off")
