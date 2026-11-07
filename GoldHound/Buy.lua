@@ -180,7 +180,7 @@ end
 function Buy.Commodity(itemID, quantity, maxUnit, name, opts)
   opts = opts or {}
   local state = { kind = "commodity", itemID = itemID, quantity = quantity, maxUnit = maxUnit, name = name or ("item " .. itemID),
-                  expectedUnit = opts.expectedUnit or maxUnit, baseProfit = opts.baseProfit, profitAt = opts.profitAt }
+                  expectedUnit = opts.expectedUnit or maxUnit, baseProfit = opts.baseProfit, profitAt = opts.profitAt, cap = opts.cap }
   if not Begin(state) then return end
   StartCommodityQuote(state, state.expectedUnit)
 end
@@ -192,7 +192,7 @@ local function OnCommodityResults(s, itemID)
   for i = 1, n do
     local r = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
     if not r then break end
-    if r.unitPrice > s.maxUnit * UNIT_SLACK then break end
+    if r.unitPrice > s.maxUnit * UNIT_SLACK or (s.cap and r.unitPrice >= s.cap) then break end
     if not r.containsOwnerItem then
       local take = math.min(r.quantity, s.quantity - qty)
       qty = qty + take
@@ -225,6 +225,14 @@ local function OnCommodityResults(s, itemID)
 end
 
 local function OnCommodityQuote(s, unitPrice, totalPrice)
+  -- `cap` is the unit price at which the purchase stops making sense, such as
+  -- what a vendor pays; an average at or above it is a certain loss.
+  if s.cap and totalPrice >= s.cap * s.quantity then
+    C_AuctionHouse.CancelCommoditiesPurchase()
+    Finish(("%d x %s now costs %s (%s each), not below the %s each it is worth; purchase cancelled."):format(
+      s.quantity, s.name, ns.Money(totalPrice), ns.Money(math.ceil(totalPrice / s.quantity)), ns.Money(s.cap)))
+    return
+  end
   if unitPrice > s.maxUnit * QUOTE_CANCEL then
     C_AuctionHouse.CancelCommoditiesPurchase()
     Finish(("Price is now %s each, more than double the expected %s; purchase cancelled."):format(ns.Money(unitPrice), ns.Money(s.maxUnit)))
@@ -312,12 +320,17 @@ end
 local function ChooseBuyout(s)
   local best
   for _, c in ipairs(s.candidates) do
-    if c.buyout > 0 and c.buyout / c.quantity <= s.maxUnit * ITEM_SLACK then
+    local unit = c.buyout / math.max(1, c.quantity)
+    if c.buyout > 0 and unit <= s.maxUnit * ITEM_SLACK and (not s.cap or unit < s.cap) then
       if not best or c.buyout < best.buyout then best = c end
     end
   end
   if not best then
-    Finish(("%s is no longer listed anywhere near %s."):format(s.name, ns.Money(s.maxUnit)))
+    if s.cap then
+      Finish(("No %s is listed below the %s each it is worth any more; the cheap listing has probably sold."):format(s.name, ns.Money(s.cap)))
+    else
+      Finish(("%s is no longer listed anywhere near %s."):format(s.name, ns.Money(s.maxUnit)))
+    end
     return
   end
   if s.timer then s.timer:Cancel() end
@@ -367,13 +380,13 @@ function Buy.Listing(listing, opts)
   opts = opts or {}
   if ns.IsCommodity(listing.itemID) then
     local s = { kind = "commodity", itemID = listing.itemID, quantity = listing.count, maxUnit = listing.unit, name = listing.name or ("item " .. listing.itemID), listing = listing,
-                expectedUnit = listing.unit, baseProfit = opts.baseProfit, profitAt = opts.profitAt }
+                expectedUnit = listing.unit, baseProfit = opts.baseProfit, profitAt = opts.profitAt, cap = opts.cap }
     if not Begin(s) then return end
     StartCommodityQuote(s, listing.unit)
     return
   end
   local s = { kind = "item", itemID = listing.itemID, suffix = listing.suffix or 0, maxUnit = listing.unit, name = listing.name or "", listing = listing, choose = ChooseBuyout,
-              expectedUnit = listing.unit, baseProfit = opts.baseProfit, profitAt = opts.profitAt }
+              expectedUnit = listing.unit, baseProfit = opts.baseProfit, profitAt = opts.profitAt, cap = opts.cap }
   if s.name == "" then ns.Print("That listing has no name yet; try again in a moment."); return end
   if not Begin(s) then return end
   StartItemSearch(s)

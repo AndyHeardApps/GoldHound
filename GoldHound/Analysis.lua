@@ -335,17 +335,54 @@ function A.Arbitrage()
   end
   for key, agg in pairs(ns.scan.byKey or {}) do
     local info = ns.ItemInfo(agg.itemID)
+    local commodity = ns.IsCommodityKey(key)
+    -- Commodities: buying takes the cheapest units on the market, not a
+    -- chosen listing, so there is one row per item covering only the units
+    -- priced below what the vendor pays, and the purchase is capped there.
+    if info and commodity and info.sellPrice > 0 then
+      local sell = info.sellPrice
+      local cost, qty, n, top = 0, 0, 0, nil
+      for _, l in ipairs(agg.listings) do -- sorted by unit price ascending
+        if l.buyout > 0 and not Pricing.IsMine(l.owner) then
+          if l.unit >= sell then break end
+          cost, qty, n, top = cost + l.buyout, qty + l.count, n + 1, l.unit
+        end
+      end
+      local revenue = sell * qty
+      local profit = revenue - cost
+      if qty > 0 and A.Passes(profit, cost) then
+        local first, itemID, name = agg.listings[1], agg.itemID, agg.name or info.name
+        local t = Finish({
+          cat = "vendor", key = key, itemID = itemID, link = info.link or first.link, name = name, icon = info.icon or first.icon,
+          qty = qty, cost = cost, revenue = revenue, profit = profit, market = sell,
+          rate = 1000000, rateSource = "vendor",
+          action = { label = "Buy all", fn = function()
+            ns.Buy.Commodity(itemID, qty, top, name, { expectedUnit = cost / qty, baseProfit = profit, cap = sell,
+              profitAt = function(_, total) return revenue - total end })
+          end },
+          lines = {
+            { "Vendor pays", ns.Money(sell) .. " each" },
+            { ("Buy all %d listings under"):format(n), ns.Money(sell) .. " each" },
+            { "Units", tostring(qty) },
+            { "Average buy price", ns.Money(cost / qty) .. " each" },
+            { "Dearest unit bought", ns.Money(top) },
+          },
+        })
+        t.days = 0
+        table.insert(rows, t)
+      end
+    end
     if info then
       for _, l in ipairs(agg.listings) do
         if l.buyout > 0 and not Pricing.IsMine(l.owner) then
-          if info.sellPrice > 0 then
+          if info.sellPrice > 0 and not commodity then
             local profit = info.sellPrice * l.count - l.buyout
             if A.Passes(profit, l.buyout) then
               local t = Finish({
                 cat = "vendor", key = key, itemID = l.itemID, link = l.link, name = l.name, icon = l.icon,
                 qty = l.count, cost = l.buyout, revenue = info.sellPrice * l.count, profit = profit, listing = l,
                 rate = 1000000, rateSource = "vendor",
-                action = { label = "Buy", fn = function() ns.Buy.Listing(l, { baseProfit = profit, profitAt = function(_, total) return info.sellPrice * l.count - total end }) end },
+                action = { label = "Buy", fn = function() ns.Buy.Listing(l, { baseProfit = profit, cap = info.sellPrice, profitAt = function(_, total) return info.sellPrice * l.count - total end }) end },
                 lines = { { "Vendor pays", ns.Money(info.sellPrice) .. " each" } },
               })
               t.days = 0

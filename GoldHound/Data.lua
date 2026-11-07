@@ -59,6 +59,26 @@ function Data.DisenchantSkill(ilvl)
   return b and b[3] or 1
 end
 
+-- Weapons and armour of uncommon quality or better that the game will not let
+-- you disenchant. The client has no API that says so, so they are listed here;
+-- /gh nodisenchant adds more (kept in ns.db.noDisenchant).
+Data.NoDisenchant = {
+  [11287] = true, -- Lesser Magic Wand (Enchanting)
+  [11288] = true, -- Greater Magic Wand (Enchanting)
+  [11289] = true, -- Lesser Mystic Wand (Enchanting)
+  [11290] = true, -- Greater Mystic Wand (Enchanting)
+}
+-- Equipment slots that can never be disenchanted.
+local NO_DISENCHANT_SLOT = { INVTYPE_BODY = true, INVTYPE_TABARD = true }
+
+-- True unless the item is known not to be disenchantable. `info` is ns.ItemInfo.
+function Data.CanDisenchant(itemID, info)
+  if Data.NoDisenchant[itemID] then return false end
+  if ns.db and ns.db.noDisenchant and ns.db.noDisenchant[itemID] then return false end
+  if info and info.equipLoc and NO_DISENCHANT_SLOT[info.equipLoc] then return false end
+  return true
+end
+
 -- Returns a list of { item = itemID, chance = 0..1, min = n, max = n } or nil when
 -- the item cannot be disenchanted. Armor favours dust, weapons favour essence.
 function Data.Disenchant(quality, ilvl, classID)

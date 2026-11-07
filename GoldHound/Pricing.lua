@@ -391,7 +391,7 @@ end
 -- Returns total copper, a breakdown list, and whether any material price is unknown.
 function Pricing.GetDisenchantValue(itemID)
   local info = ns.ItemInfo(itemID)
-  if not info then return nil end
+  if not info or not ns.Data.CanDisenchant(itemID, info) then return nil end
   local outcomes = ns.Data.Disenchant(info.quality, info.ilvl, info.classID)
   if not outcomes then return nil end
   local total, parts, missing = 0, {}, false

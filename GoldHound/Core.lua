@@ -362,6 +362,7 @@ local function Help()
   ns.Print("  /gh - toggle the window")
   ns.Print("  /gh scan [force] - full auction house scan (AH must be open)")
   ns.Print("  /gh scan why - what went wrong with the last failed scan")
+  ns.Print("  /gh nodisenchant <item> - never suggest disenchanting an item (shift-click it in)")
   ns.Print("  /gh auto [on|off] - auto-scan: rescan whenever the cooldown ends while the AH is open (now %s)", s.autoScan and "on" or "off")
   ns.Print("  /gh sound - toggle the sound played when a full scan completes (now %s)", s.scanSound and "on" or "off")
   ns.Print("  /gh refresh [force|stop] - re-price only the items your recipes make and use (no 15 minute wait)")
@@ -467,6 +468,20 @@ SlashCmdList.GOLDHOUND = function(msg)
     for i = 1, math.min(n, #all) do
       local l = all[i]
       ns.Print("  %s x%d: buyout %.0f copper (%s), min bid %.0f, bid %.0f, owner %s", l.name or "?", l.count, l.buyout, ns.Money(l.buyout), l.minBid or 0, l.bidAmount or 0, tostring(l.owner))
+    end
+  elseif cmd == "nodisenchant" then
+    -- Marks (or unmarks) an item as impossible to disenchant: shift-click it in.
+    local itemID = ns.ItemIDFromLink(rest) or tonumber(rest)
+    if not itemID then
+      ns.Print("Usage: /gh nodisenchant <shift-click an item> - toggles whether GoldHound suggests disenchanting it")
+    elseif ns.Data.NoDisenchant[itemID] then
+      ns.Print("That item is already known not to be disenchantable.")
+    else
+      ns.db.noDisenchant = ns.db.noDisenchant or {}
+      local now = not ns.db.noDisenchant[itemID] or nil
+      ns.db.noDisenchant[itemID] = now
+      ns.Analysis.Invalidate()
+      ns.Print("%s will %s.", rest, now and "no longer be suggested for disenchanting" or "be suggested for disenchanting again")
     end
   elseif cmd == "units" then
     if rest == "auto" or rest == "unit" or rest == "stack" then
