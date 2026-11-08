@@ -35,9 +35,11 @@ end
 
 -- Returns parsed data for a recipe item or nil when the tooltip is not cached yet.
 -- { prof, skill, product, reagents = { {name, qty} }, known }
+local RETRY = 3600 -- tooltips read before the item was cached are read again after this long
+
 function Recipes.Parse(itemID)
   local cached = ns.db.recipeItems[itemID]
-  if cached and cached.prof then return cached end
+  if cached and cached.prof and (cached.product or (cached.t or 0) > time() - RETRY) then return cached end
   if not C_TooltipInfo or not C_TooltipInfo.GetItemByID then return nil end
   local ok, data = pcall(C_TooltipInfo.GetItemByID, itemID)
   if not ok or not data or not data.lines or #data.lines == 0 then
@@ -87,4 +89,26 @@ function Recipes.AlreadyKnown(prof, productName)
     if r.prof == prof and r.name == productName then return true end
   end
   return false
+end
+
+-- Materials for the recipe a recipe item teaches, read from the profession
+-- window (known or unlearned recipes): { name, out, qmin, qmax, reagents } or nil.
+local function Lower(text) return type(text) == "string" and text:lower() or nil end
+
+function Recipes.Schematic(parsed)
+  if not parsed or not parsed.product then return nil end
+  local product = Lower(parsed.product)
+  local productID = ns.ItemIDByName(parsed.product)
+  local best
+  for _, store in ipairs({ ns.db.unlearned or {}, ns.db.recipes or {} }) do
+    for _, r in pairs(store) do
+      if r.reagents and #r.reagents > 0 and (not parsed.prof or not r.prof or r.prof == parsed.prof) then
+        if (productID and r.out == productID) or Lower(r.name) == product then
+          best = r
+          if r.out then return r end
+        end
+      end
+    end
+  end
+  return best
 end

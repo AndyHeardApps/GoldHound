@@ -18,7 +18,7 @@ function Worth.Compute()
   local names = {}
   for key, rec in pairs(ns.db.chars or {}) do
     if rec.realm == ns.realmName then
-      if key == ns.charKey then gold = gold + ns.Budget() else gold = gold + (rec.money or 0) end
+      if key == ns.charKey and not ns.loggingOut then gold = gold + ns.Budget() else gold = gold + (rec.money or 0) end
       for _, held in ipairs({ rec.bags, rec.bank, rec.incoming }) do
         for itemID, count in pairs(held or {}) do
           local v = Value(itemID)
@@ -73,7 +73,8 @@ for _, ev in ipairs({ "CHARS_UPDATED", "INVENTORY_UPDATED", "SCAN_COMPLETE", "RE
   ns.On(ev, Schedule)
 end
 ns.On("READY", function() C_Timer.After(12, Worth.Sample) end)
-ns.RegisterEvent("PLAYER_LOGOUT", function() if ns.realm then Worth.Sample() end end)
+-- No sample on PLAYER_LOGOUT: gold and bags read as empty by then, which
+-- recorded a dip to just the other characters' gold on every logout.
 
 -- Exact value of this character's auctions whenever the auction house reports them.
 local function CaptureOwnedAuctions()

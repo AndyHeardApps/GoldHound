@@ -83,7 +83,7 @@ ns.RegisterEvent("BANKFRAME_CLOSED", function() bankOpen = false end)
 ns.RegisterEvent("PLAYERBANKSLOTS_CHANGED", function()
   if bankOpen then ns.Debounce("inv-bank", 1.0, CaptureBank) end
 end)
-ns.RegisterEvent("PLAYER_LOGOUT", CaptureBags)
+-- No capture on PLAYER_LOGOUT: the bags read as empty by then.
 
 -- Units of an item held by one character record (bags, bank, and mail in transit).
 local function Held(rec, itemID)

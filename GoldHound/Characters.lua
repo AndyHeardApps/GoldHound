@@ -3,8 +3,13 @@ local ADDON, ns = ...
 local Chars = {}
 ns.Chars = Chars
 
+-- During PLAYER_LOGOUT the game already reports 0 gold, no professions and
+-- empty bags, so nothing is read from the API then: the values recorded while
+-- playing are kept, and the money is taken from the last PLAYER_MONEY.
+local loggingOut = false
+
 local function Record()
-  if not ns.db or not ns.charKey then return end
+  if not ns.db or not ns.charKey or loggingOut then return end
   local rec = ns.db.chars[ns.charKey] or {}
   ns.db.chars[ns.charKey] = rec
   rec.name = ns.charName
@@ -12,13 +17,13 @@ local function Record()
   rec.realmKey = ns.realmKey
   rec.money = ns.Budget()
   rec.lastSeen = time()
-  rec.professions = {}
   if GetProfessions and GetProfessionInfo then
     -- GetProfessions returns primary 1, primary 2, (archaeology slot, unused on
     -- Forever), fishing, cooking, first aid. ipairs stops at the first nil, so
     -- the slots are collected explicitly.
     local ok, p1, p2, slot3, fishing, cooking, firstAid = pcall(GetProfessions)
     if ok then
+      rec.professions = {}
       for _, index in pairs({ p1, p2, slot3, fishing, cooking, firstAid }) do
         if index then
           local ok2, name, _, skill, maxSkill, _, _, skillLine = pcall(GetProfessionInfo, index)
@@ -35,8 +40,18 @@ end
 
 ns.On("READY", function() C_Timer.After(2, Record) end)
 ns.RegisterEvent("SKILL_LINES_CHANGED", function() ns.Debounce("chars", 2, Record) end)
-ns.RegisterEvent("PLAYER_MONEY", function() ns.Debounce("chars-money", 5, Record) end)
-ns.RegisterEvent("PLAYER_LOGOUT", Record)
+ns.RegisterEvent("PLAYER_MONEY", function()
+  -- Store the money straight away so a change just before logging out is kept.
+  local rec = ns.db and ns.charKey and ns.db.chars[ns.charKey]
+  if rec and not loggingOut then rec.money = ns.Budget() end
+  ns.Debounce("chars-money", 5, Record)
+end)
+ns.RegisterEvent("PLAYER_LOGOUT", function()
+  loggingOut = true
+  ns.loggingOut = true
+  local rec = ns.db and ns.charKey and ns.db.chars[ns.charKey]
+  if rec then rec.lastSeen = time() end
+end)
 
 -- All characters on this realm (any faction) that have the profession.
 -- Returns a list of { key, name, skill, max } sorted by skill, highest first.

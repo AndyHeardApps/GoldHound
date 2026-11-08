@@ -369,7 +369,12 @@ end
 
 -- Cost of one craft of a recipe. Returns { total, perUnit, complete, reagents = {...} } or nil.
 function Pricing.CraftCost(recipeID, depth, visited)
-  local r = ns.db.recipes[recipeID]
+  return Pricing.RecipeCost(ns.db.recipes[recipeID], depth, visited)
+end
+
+-- Same as CraftCost, for any recipe record { reagents, qmin, qmax } (also the
+-- unlearned recipes, which are not in ns.db.recipes).
+function Pricing.RecipeCost(r, depth, visited)
   if not r or not r.reagents then return nil end
   local total, complete, parts = 0, true, {}
   for _, reagent in ipairs(r.reagents) do

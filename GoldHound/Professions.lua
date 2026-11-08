@@ -15,6 +15,39 @@ local function Flag(fn)
   return ok and v or false
 end
 
+-- Basic reagents of a recipe schematic as { {itemID, qty}, ... }, and whether
+-- every one of them is an item (currency costs cannot be priced).
+local function ReadReagents(schematic)
+  local reagents, complete = {}, true
+  for _, slot in ipairs(schematic.reagentSlotSchematics or {}) do
+    if (slot.reagentType == REAGENT_BASIC or slot.reagentType == nil) and slot.required ~= false then
+      local first = slot.reagents and slot.reagents[1]
+      if first and first.itemID then
+        table.insert(reagents, { first.itemID, slot.quantityRequired or 1 })
+      elseif first and first.currencyID then
+        complete = false
+      end
+    end
+  end
+  return reagents, complete
+end
+
+-- Unlearned recipes are kept apart from known ones (they must not count as
+-- crafts you can make), so recipe items on the auction house can be priced
+-- with their real materials.
+local function RecordUnlearned(recipeID, info, profName)
+  local oks, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, recipeID, false)
+  if not oks or type(schematic) ~= "table" then return end
+  local reagents, complete = ReadReagents(schematic)
+  if #reagents == 0 then return end
+  ns.db.unlearned[recipeID] = {
+    name = schematic.name or info.name, prof = profName, out = schematic.outputItemID,
+    qmin = schematic.quantityMin or 1, qmax = schematic.quantityMax or schematic.quantityMin or 1,
+    reagents = reagents, complete = complete, t = time(),
+  }
+  return true
+end
+
 -- Reads the open profession. With verbose=true every step is reported in chat.
 local function Capture(verbose)
   if not ns.db or not ns.charKey then Say(verbose, "Not ready yet (no database)."); return end
@@ -48,7 +81,7 @@ local function Capture(verbose)
   end
   if #ids == 0 then Say(verbose, "No recipe IDs returned; the window may still be loading. Try /gh recipes again."); return end
 
-  local added, seen, unlearned, noInfo, noSchematic = 0, 0, 0, 0, 0
+  local added, seen, unlearned, unlearnedRead, noInfo, noSchematic = 0, 0, 0, 0, 0, 0
   local sample
   for _, recipeID in ipairs(ids) do
     local okr, info = pcall(C_TradeSkillUI.GetRecipeInfo, recipeID)
@@ -57,6 +90,9 @@ local function Capture(verbose)
       if verbose and not sample then sample = "GetRecipeInfo(" .. tostring(recipeID) .. ") -> " .. tostring(info) end
     elseif not info.learned then
       unlearned = unlearned + 1
+      if not (info.isDummyRecipe or info.isGatheringRecipe or info.isSalvageRecipe) and RecordUnlearned(recipeID, info, profName) then
+        unlearnedRead = unlearnedRead + 1
+      end
     elseif info.isDummyRecipe or info.isGatheringRecipe or info.isSalvageRecipe then
       -- headers and gathering entries are not crafts
     else
@@ -65,17 +101,8 @@ local function Capture(verbose)
         noSchematic = noSchematic + 1
         if verbose and not sample then sample = "GetRecipeSchematic(" .. tostring(recipeID) .. ") -> " .. tostring(schematic) end
       else
-        local reagents, complete = {}, true
-        for _, slot in ipairs(schematic.reagentSlotSchematics or {}) do
-          if (slot.reagentType == REAGENT_BASIC or slot.reagentType == nil) and slot.required ~= false then
-            local first = slot.reagents and slot.reagents[1]
-            if first and first.itemID then
-              table.insert(reagents, { first.itemID, slot.quantityRequired or 1 })
-            elseif first and first.currencyID then
-              complete = false
-            end
-          end
-        end
+        local reagents, complete = ReadReagents(schematic)
+        ns.db.unlearned[recipeID] = nil
         local rec = ns.db.recipes[recipeID]
         if not rec then
           rec = {}
@@ -117,9 +144,9 @@ local function Capture(verbose)
       end
     end
   end
-  Say(verbose, "Recorded %d crafts (%d new). Unlearned: %d, no info: %d, no schematic: %d.", seen, added, unlearned, noInfo, noSchematic)
+  Say(verbose, "Recorded %d crafts (%d new). Unlearned: %d (%d with materials read), no info: %d, no schematic: %d.", seen, added, unlearned, unlearnedRead, noInfo, noSchematic)
   if sample then Say(verbose, "Sample: %s", sample) end
-  if seen > 0 then
+  if seen > 0 or unlearnedRead > 0 then
     ns.Pricing.InvalidateRecipeIndex()
     if added > 0 and not verbose then
       ns.Print("Recorded %d new %s recipes (%d total for this profession).", added, profName, seen)

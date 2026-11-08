@@ -327,6 +327,7 @@ ns.RegisterEvent("ADDON_LOADED", function(name)
   db.vendorBuy = db.vendorBuy or {}  -- itemID -> cheapest vendor price seen
   db.vendorInfo = db.vendorInfo or {}-- itemID -> { where = "NPC (zone)", limited = bool, classID = n }
   db.recipeItems = db.recipeItems or {} -- recipe item ID -> parsed tooltip data
+  db.unlearned = db.unlearned or {}  -- recipeID -> materials of a recipe none of your characters knows yet
   ns.db = db
   ns.settings = db.settings
   ns.Fire("DB_LOADED")

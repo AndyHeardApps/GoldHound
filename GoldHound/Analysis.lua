@@ -434,26 +434,45 @@ end
 -- Recipes on the AH that a character of yours could learn and profit from.
 -------------------------------------------------------------------------------
 local function ProfitForRecipeItem(parsed, s)
-  local productID = ns.Recipes.ItemIDByName(parsed.product)
+  -- Materials come from the profession window when one of your characters has
+  -- seen the recipe there (learned or not); the recipe item's tooltip is only
+  -- a fallback, as its material line is often missing.
+  local schematic = ns.Recipes.Schematic(parsed)
+  local productID = schematic and schematic.out or ns.Recipes.ItemIDByName(parsed.product)
   if not productID then return nil, "product not priced yet" end
   local value = ns.Pricing.ItemValue(productID)
   if not value then return nil, "product not priced yet" end
+  local reagents, avgOut = {}, 1
+  if schematic then
+    for _, r in ipairs(schematic.reagents) do
+      local info = ns.ItemInfo(r[1])
+      table.insert(reagents, { id = r[1], name = info and info.name or ("item " .. r[1]), qty = r[2] or 1 })
+    end
+    avgOut = ((schematic.qmin or 1) + (schematic.qmax or schematic.qmin or 1)) / 2
+  else
+    for _, r in ipairs(parsed.reagents or {}) do
+      table.insert(reagents, { id = ns.Recipes.ItemIDByName(r.name), name = r.name, qty = r.qty })
+    end
+  end
+  -- Without any materials the profit would be the full sale price.
+  if #reagents == 0 then return nil, "materials unknown" end
   local cost, partial = 0, false
   local lines = {}
-  for _, r in ipairs(parsed.reagents or {}) do
-    local id = ns.Recipes.ItemIDByName(r.name)
+  for _, r in ipairs(reagents) do
     local unit, source = nil, nil
-    if id then unit, source = ns.Pricing.ReagentCost(id) end
+    if r.id then unit, source = ns.Pricing.ReagentCost(r.id, 0, nil, r.qty) end
     if unit then
       cost = cost + unit * r.qty
-      table.insert(lines, { ("  %s x%d (%s)"):format(r.name, r.qty, source or "?"), ns.Money(unit * r.qty) })
+      table.insert(lines, { ("  %s x%d (%s)"):format(r.name, r.qty, source == "ah" and "AH" or source or "?"), ns.Money(unit * r.qty) })
     else
       partial = true
       table.insert(lines, { ("  %s x%d"):format(r.name, r.qty), "|cff9d9d9dunknown|r" })
     end
   end
-  local revenue = value * (1 - s.ahCut)
-  return { productID = productID, value = value, cost = cost, partial = partial, profit = revenue - cost, lines = lines }
+  -- A material with no price would make the craft look free; leave it out.
+  if partial and cost == 0 then return nil, "material prices unknown" end
+  local revenue = value * avgOut * (1 - s.ahCut)
+  return { productID = productID, value = value, avgOut = avgOut, cost = cost, partial = partial, profit = revenue - cost, lines = lines }
 end
 
 function A.Recipes()
@@ -487,7 +506,7 @@ function A.Recipes()
           local lines = {
             { "Teaches", parsed.product },
             { "Requires", ("%s (%d), %s has %d"):format(parsed.prof, parsed.skill, who.name, who.skill) },
-            { "Product sells for", ns.Money(calc.value) },
+            { "Product sells for", ns.Money(calc.value) .. (calc.avgOut ~= 1 and (" each, makes %.1f"):format(calc.avgOut) or "") },
             { "Materials per craft", ns.Money(calc.cost) .. (calc.partial and " (partial)" or "") },
           }
           for _, line in ipairs(calc.lines) do table.insert(lines, line) end
