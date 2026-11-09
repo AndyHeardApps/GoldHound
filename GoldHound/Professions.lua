@@ -167,9 +167,111 @@ for _, ev in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKIL
   ns.RegisterEvent(ev, function() Schedule(1.0) end)
 end
 
--- Also hook the profession window itself, in case the events differ on this client.
-ns.RegisterEvent("ADDON_LOADED", function(name)
-  if name == "Blizzard_Professions" and ProfessionsFrame and ProfessionsFrame.HookScript then
-    ProfessionsFrame:HookScript("OnShow", function() Schedule(1.5) end)
+-------------------------------------------------------------------------------
+-- "Add to plan" on the profession window: a button beside Create All that puts
+-- crafts of the selected recipe in the Plan tab. Same clicks as the Plan tab:
+-- left one more, right one fewer, Ctrl for ten.
+-------------------------------------------------------------------------------
+local planButton
+
+local function SelectedRecipe()
+  local page = ProfessionsFrame and ProfessionsFrame.CraftingPage
+  local form = page and page.SchematicForm
+  if not form or not form.GetRecipeInfo then return nil end
+  local ok, info = pcall(form.GetRecipeInfo, form)
+  if ok and type(info) == "table" then return info end
+  return nil
+end
+
+-- Why the selected recipe cannot be planned, or nil when it can.
+local function Blocked(info)
+  if not info then return "Select a recipe first." end
+  if Flag(C_TradeSkillUI.IsTradeSkillLinked) or Flag(C_TradeSkillUI.IsTradeSkillGuild) or Flag(C_TradeSkillUI.IsNPCCrafting) then
+    return "Only your own professions can be planned."
   end
+  if not info.learned then return "You have not learned this recipe." end
+  if info.isDummyRecipe or info.isGatheringRecipe or info.isSalvageRecipe or info.isRecraft then return "This recipe cannot be planned." end
+  return nil
+end
+
+local function UpdatePlanButton()
+  if not planButton then return end
+  local info = SelectedRecipe()
+  planButton:SetEnabled(Blocked(info) == nil)
+  local planned = info and ns.UI and ns.UI.PlannedCrafts and ns.UI.PlannedCrafts(info.recipeID) or 0
+  planButton:SetText(planned > 0 and ("Planned: %d"):format(planned) or "Add to plan")
+end
+
+local function AddSelected(amount)
+  local info = SelectedRecipe()
+  local why = Blocked(info)
+  if why then ns.Print(why) return end
+  -- The recipe may not be recorded yet if the window opened a moment ago.
+  if not ns.db.recipes[info.recipeID] then Capture(false) end
+  local r = ns.db.recipes[info.recipeID]
+  if not r or not r.reagents then ns.Print("%s is not recorded yet; try again in a moment.", info.name or "That recipe") return end
+  if amount > 0 then
+    ns.UI.ShowShopping(info.recipeID, amount)
+  else
+    ns.UI.AdjustShopping(info.recipeID, amount)
+  end
+  ns.Print("%s: %d crafts in the plan.", r.name or info.name or "?", ns.UI.PlannedCrafts(info.recipeID))
+  UpdatePlanButton()
+end
+
+local function BuildPlanButton()
+  local page = ProfessionsFrame and ProfessionsFrame.CraftingPage
+  if planButton or not page or not page.CreateAllButton then return end
+  planButton = CreateFrame("Button", "GoldHoundPlanButton", page, "UIPanelButtonTemplate")
+  planButton:SetSize(80, 22)
+  planButton:SetPoint("RIGHT", page.CreateAllButton, "LEFT", -6, 0)
+  planButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  planButton:SetMotionScriptsWhileDisabled(true) -- the tooltip says why it is disabled
+  planButton:SetFrameLevel(page.CreateAllButton:GetFrameLevel() + 2)
+
+  planButton:SetScript("OnClick", function(_, button)
+    local n = IsControlKeyDown() and 10 or 1
+    if button == "RightButton" then AddSelected(-n) else AddSelected(n) end
+  end)
+  planButton:SetScript("OnEnter", function(self)
+    local info = SelectedRecipe()
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("GoldHound plan")
+    local why = Blocked(info)
+    if why then
+      GameTooltip:AddLine(why, 1, 0.3, 0.3, true)
+    else
+      GameTooltip:AddDoubleLine("In the plan", ("%d crafts"):format(ns.UI.PlannedCrafts(info.recipeID)), 0.8, 0.8, 0.8, 1, 1, 1)
+      GameTooltip:AddLine("Left-click adds a craft, right-click removes one. Hold Ctrl for ten. The Plan tab lists the materials to buy.", 0.8, 0.8, 0.8, true)
+    end
+    GameTooltip:Show()
+  end)
+  planButton:SetScript("OnLeave", GameTooltip_Hide)
+  planButton:SetScript("OnShow", UpdatePlanButton)
+
+  if EventRegistry then
+    EventRegistry:RegisterCallback("ProfessionsRecipeListMixin.Event.OnRecipeSelected", function()
+      C_Timer.After(0, UpdatePlanButton)
+    end, planButton)
+  end
+  UpdatePlanButton()
+end
+
+ns.On("PLAN_CHANGED", function() if planButton and planButton:IsVisible() then UpdatePlanButton() end end)
+
+local function HookFrame()
+  if not ProfessionsFrame or not ProfessionsFrame.HookScript or Professions.hooked then return end
+  Professions.hooked = true
+  -- Also hook the profession window itself, in case the events differ on this client.
+  ProfessionsFrame:HookScript("OnShow", function()
+    Schedule(1.5)
+    BuildPlanButton()
+    UpdatePlanButton()
+  end)
+  if ProfessionsFrame:IsShown() then BuildPlanButton() end
+end
+
+ns.RegisterEvent("ADDON_LOADED", function(name)
+  if name == "Blizzard_Professions" then HookFrame() end
 end)
+ns.On("READY", HookFrame) -- in case another addon loaded the window before GoldHound
