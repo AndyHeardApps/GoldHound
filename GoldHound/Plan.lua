@@ -18,6 +18,21 @@ local function ItemName(itemID)
   return info and info.name or ("item " .. itemID), info and info.link, info and info.icon
 end
 
+-- Cast time of one craft in seconds, or nil when unknown. A recipe ID is the
+-- ID of the spell that crafts it; the time read when the profession window was
+-- open is kept for when the spell data is not loaded.
+function Plan.CastTime(recipeID)
+  local r = ns.db.recipes[recipeID]
+  if C_Spell and C_Spell.GetSpellInfo then
+    local ok, info = pcall(C_Spell.GetSpellInfo, recipeID)
+    if ok and type(info) == "table" and type(info.castTime) == "number" and info.castTime > 0 then
+      if r then r.cast = info.castTime / 1000 end
+      return info.castTime / 1000
+    end
+  end
+  return r and r.cast or nil
+end
+
 -------------------------------------------------------------------------------
 -- Building
 -------------------------------------------------------------------------------

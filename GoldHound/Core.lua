@@ -291,6 +291,18 @@ function ns.AgeText(t)
   return ("%dd"):format(math.floor(d / 86400))
 end
 
+-- A length of time in seconds as "45s", "1m 40s" or "1h 05m".
+function ns.DurationText(seconds)
+  if not seconds then return nil end
+  seconds = math.floor(seconds + 0.5)
+  if seconds < 60 then return ("%ds"):format(seconds) end
+  if seconds < 3600 then
+    local s = seconds % 60
+    return s > 0 and ("%dm %ds"):format(math.floor(seconds / 60), s) or ("%dm"):format(math.floor(seconds / 60))
+  end
+  return ("%dh %02dm"):format(math.floor(seconds / 3600), math.floor(seconds % 3600 / 60))
+end
+
 function ns.Count(t)
   local n = 0
   for _ in pairs(t or {}) do n = n + 1 end

@@ -109,7 +109,11 @@ local function StepText(r)
   if r.type == "buy_ah" then return ("Buy %d x %s"):format(r.qty, r.name) end
   if r.type == "buy_vendor" then return ("Buy %d x %s from a vendor"):format(r.qty, r.name) end
   if r.type == "mail" then return ("Mail %d x %s to %s"):format(r.qty, r.name, r.to) end
-  if r.type == "craft" then return ("Craft %d x %s"):format(r.qty, r.name) end
+  if r.type == "craft" then
+    local text = ("Craft %d x %s"):format(r.qty, r.name)
+    if r.craftTime then text = text .. GREY .. "  " .. ns.DurationText(r.craftTime) .. R end
+    return text
+  end
   if r.type == "post" then return ("Post %d x %s"):format(r.qty, r.name) end
   return r.name or "?"
 end
@@ -121,6 +125,7 @@ local PLAN_COLUMNS = {
         local done = r.done or 0
         local text = "|cffffd100" .. (r.name or "?") .. "|r  x" .. r.crafts .. " crafts"
         if r.posted and r.posted > 0 then text = text .. GREY .. ("  (%d posted)"):format(r.posted) .. R end
+        if r.craftTime and done < r.crafts then text = text .. GREY .. "  " .. ns.DurationText(r.craftTime) .. R end
         if done >= r.crafts then return text .. GREEN .. "  all crafted" .. R end
         if done > 0 then return text .. GREY .. ("  (%d crafted)"):format(done) .. R end
         return text
@@ -272,7 +277,8 @@ local TABS = {
     end },
   { id = "plan", label = "Plan", columns = PLAN_COLUMNS, sort = nil,
     rows = function() return UI.PlanRows() end,
-    empty = "Nothing planned. Press Add on a craft in the Crafting tab.",
+    footer = function() return UI.PlanFooter() end,
+    empty = "Nothing planned. Press Add on a craft in the Crafting tab, or Add to plan in a profession window.",
     tooltip = function(row, tt)
       if row.kind == "recipe" then
         tt:AddDoubleLine("Crafts planned", tostring(row.crafts), 0.8, 0.8, 0.8, 1, 1, 1)
@@ -389,6 +395,31 @@ local function AvgOut(recipe)
   return recipe and (((recipe.qmin or 1) + (recipe.qmax or recipe.qmin or 1)) / 2) or 1
 end
 
+-- Time to make a number of crafts of a recipe, on the row and in its tooltip.
+local function AddCraftTime(row, recipeID, crafts)
+  row.craftTime = nil
+  local cast = ns.Plan.CastTime(recipeID)
+  if not cast or not crafts or crafts <= 0 then return end
+  row.craftTime = cast * crafts
+  row.lines = row.lines or {}
+  table.insert(row.lines, { "Craft time", ("%d x %.1fs = %s"):format(crafts, cast, ns.DurationText(row.craftTime)) })
+end
+
+-- Footer of the Plan tab: crafting time for every craft still to do.
+function UI.PlanFooter()
+  local total, crafts, unknown = 0, 0, 0
+  for _, step in ipairs(state.rows or {}) do
+    if step.type == "craft" and not step.done then
+      crafts = crafts + step.qty
+      if step.craftTime then total = total + step.craftTime else unknown = unknown + step.qty end
+    end
+  end
+  if crafts == 0 then return "No crafts left in the plan." end
+  local text = ("Crafting time left: %s for %d crafts."):format(ns.DurationText(total), crafts)
+  if unknown > 0 then text = text .. (" Cast time unknown for %d of them."):format(unknown) end
+  return text .. " Cast times only; buying, mailing and posting come on top."
+end
+
 function UI.PlanRows()
   local rows = {}
   for _, entry in ipairs(ShoppingList()) do
@@ -402,6 +433,7 @@ function UI.PlanRows()
         action = { label = "Remove", fn = function() UI.AdjustShopping(recipeID, -entry.crafts) end, enabled = true },
       }
       AddCraftProfit(row, recipeID, entry.crafts)
+      AddCraftTime(row, recipeID, entry.crafts - (entry.done or 0))
       table.insert(rows, row)
     end
   end
@@ -430,7 +462,10 @@ function UI.PlanRows()
         end
       end
     end
-    if step.type == "craft" and step.recipeID then AddCraftProfit(step, step.recipeID, step.qty) end
+    if step.type == "craft" and step.recipeID then
+      AddCraftProfit(step, step.recipeID, step.qty)
+      AddCraftTime(step, step.recipeID, step.qty)
+    end
     step.action = { label = label, fn = function() ns.Plan.Run(step) end, enabled = enabled }
     table.insert(rows, step)
   end

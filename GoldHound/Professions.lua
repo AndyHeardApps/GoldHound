@@ -136,6 +136,11 @@ local function Capture(verbose)
           if not o then rec.seen[d] = { lo = skill, hi = skill }
           else o.lo, o.hi = math.min(o.lo, skill), math.max(o.hi, skill) end
         end
+        local okc, spell = false, nil
+        if C_Spell and C_Spell.GetSpellInfo then okc, spell = pcall(C_Spell.GetSpellInfo, recipeID) end
+        if okc and type(spell) == "table" and type(spell.castTime) == "number" and spell.castTime > 0 then
+          rec.cast = spell.castTime / 1000
+        end
         rec.difficulty, rec.trivial = nil, nil
         rec.t = time()
         if verbose and not sample then
